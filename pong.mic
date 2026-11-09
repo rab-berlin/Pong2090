@@ -1,0 +1,318 @@
+; pong-01.mic - Pong fuer Busch Microtronic 2090 mit 8x8-LED-Matrix und 2 Tastern
+; 256 Schritte (00-FF), frei: 0
+; Start: Reset (z), laden (l), Matrix mit m aktivieren, Ansicht v, RUN, dann Spielstufe als Hex-Taste.
+;   Alle Register muessen 0 sein (RF = F nach dem Einschalten stoert nicht).
+;   Matrix vergessen? Das Programm wartet ohne Bild: einmal m druecken.
+; Spielstufe (erste Taste): 1-F = gegen den Computer, je hoeher, desto staerker; 0 = allein gegen die Wand.
+; Taster 2 (Pfeil hoch) = Schlaeger hoch, Taster 3 (Pfeil runter) = runter; Taste halten, bis er zieht.
+;   Beide zugleich: nichts. Taster 1 und 4 werden nicht gebraucht.
+; Spieler: Spalte 1, Reihe PP+1 bis PP+3. Computer: Spalte 8. Ball: ein Punkt in Spalte 2-7.
+; Winkel: Treffer mit der Schlaegermitte = flach (1 Reihe je 2 Spalten), Richtung bleibt;
+;   mit der oberen oder unteren Kante = steil (1 Reihe je Spalte) weg von der Mitte.
+;   Oben und unten prallt der Ball ab. Aufschlag aus Spalte 4, Hoehe und Richtung zufaellig, aufwaerts.
+; Computer: zieht nur, solange der Ball auf ihn zufliegt, je Takt mit Wahrscheinlichkeit Stufe/16,
+;   und nur, wenn der Ball ueber oder unter seinem Schlaeger ist.
+; Punkt: Ball in Spalte 1 bzw. 8. Anzeige Spieler Computer (2 Stellen), weiter mit einer Hex-Taste.
+;   Bei 9 Punkten bleibt der Endstand stehen. Neues Spiel: Reset, RUN.
+; Wand (Stufe 0): Spalte 8 ganz hell, der Ball prallt dort mit gleichem Winkel ab.
+;   Der erste Fehler beendet das Spiel; die Anzeige zeigt die Treffer hexadezimal (00-FF).
+; Tempo: ein Takt (Ball eine Spalte weiter, Schlaeger eine Reihe) dauert etwa 0,6-1,2 s, im Mittel 0,95 s.
+; Die Matrix bleibt die ganze Zeit aktiv (die Taster liegen an Eingang 2 und 3, nicht am Bereit-Signal).
+;
+; Bildspeicher: Spalten 1-4 (links) in M0-M7, Spalten 5-8 (rechts) in M8-MF, je ein Register pro Reihe
+;   (Reihe 1 = M0 bzw. M8). Die Zeilen sind also nach Haelften sortiert; DOT gibt sie paarweise aus.
+; Kontext SL (Logik): R0-R7 = S, R8-RF = L. Fenster links: EXRL (R0-R7 = Spalten 1-4, L bleibt in R8-RF).
+;   Fenster rechts: EXRA EXRM EXRA (R0-R7 = Spalten 5-8, L in R8-RF). Bild aus dem linken Fenster mit EXRM.
+;   PAD und CLROP arbeiten in beiden Fenstern auf R0-R7.
+;
+; #define (Register im Kontext SL)
+;   PP  r0  S: Spieler-Schlaeger, unterste Reihe 0-5
+;   CP  r1  S: Computer-Schlaeger, unterste Reihe 0-5
+;   DX  r2  S: Richtung waagerecht, 0 = nach links, sonst nach rechts
+;   DY  r3  S: senkrecht je Takt in halben Reihen: 1/2 aufwaerts, F/E abwaerts (flach/steil)
+;   AA  r4  S: Zaehler des Computers (Ueberlauf von AA + AS = Zug)
+;   AS  r5  S: Spielstufe 0-F
+;   CS  r6  S: Punkte Computer (Wand: Treffer, niedrige Stelle)
+;   PS  r7  S: Punkte Spieler (Wand: Treffer, hohe Stelle)
+;   Y   r8  L: Hoehe des Balls 0-F (Reihe = Y/2)
+;   BL  r9  L: Ball in Spalte 1-4 als Bit 1/2/4/8, sonst 0
+;   BR  rA  L: Ball in Spalte 5-8 als Bit 1/2/4/8, sonst 0
+;   J   rB  L: Reihe fuer PAD
+;   W   rC  L: immer 0 (Endnibble)
+;   T   rD  L: Reihe des Balls 0-7 (RND-Ziffer D)
+;   V   rE  L: Hilfsregister: Treffer, Wert fuer PAD/CLROP, Taste (RND-Ziffer E)
+;   M   rF  L: Hilfsregister: Taster, Bereit, Ball fuer CLROP (RND-Ziffer F)
+;
+
+; ---------------------------------------------------------------- Start
+FF5   ; 00  BEGIN    KIN     AS               Spielstufe 0-F (0 = Wand)
+F02   ; 01  NEWB     DISOUT                   Anzeige aus: 9,3 ms je Befehl (Takt der Matrix)
+120   ; 02           MOVI    #2,PP
+121   ; 03           MOVI    #2,CP
+F0D   ; 04           EXRL                     Bild direkt in R0-RF
+F0E   ; 05           EXRM
+F08   ; 06           CLEAR
+112   ; 07           MOVI    #1,r2            Schlaeger links, Reihe 3-5
+113   ; 08           MOVI    #1,r3
+114   ; 09           MOVI    #1,r4
+18A   ; 0A           MOVI    #8,rA            Schlaeger rechts, Reihe 3-5
+18B   ; 0B           MOVI    #8,rB
+18C   ; 0C           MOVI    #8,rC
+F0D   ; 0D           EXRL
+F0E   ; 0E           EXRM
+905   ; 0F           CMPI    #0,AS
+D1A   ; 10           BRC     SERVE            Stufe 1-F: Computer
+F0D   ; 11           EXRL                     Stufe 0: Wand in Spalte 8
+F0E   ; 12           EXRM
+188   ; 13           MOVI    #8,r8            Reihe 1 rechts
+189   ; 14           MOVI    #8,r9            Reihe 2
+18D   ; 15           MOVI    #8,rD            Reihe 6
+18E   ; 16           MOVI    #8,rE            Reihe 7
+18F   ; 17           MOVI    #8,rF            Reihe 8
+F0D   ; 18           EXRL
+F0E   ; 19           EXRM
+
+F05   ; 1A  SERVE    RND                      Zufall aus der Wartezeit bei KIN
+0D8   ; 1B           MOV     T,Y              Hoehe 0-F (Zeile = Y/2)
+F9E   ; 1C           SHR     V
+113   ; 1D           MOVI    #1,DY            aufwaerts, flach oder steil
+FB3   ; 1E           ADC     DY
+0F2   ; 1F           MOV     M,DX             Richtung zufaellig
+312   ; 20           ANDI    #1,DX
+189   ; 21           MOVI    #8,BL            Spalte 4 (BR ist hier immer 0)
+C3E   ; 22           GOTO    VT
+
+; ---------------------------------------------------------------- Takt
+902   ; 23  TICK     CMPI    #0,DX
+E34   ; 24           BRZ     BLEFT
+94A   ; 25           CMPI    #4,BR            Spalte 7 vor dem Computer?
+E2C   ; 26           BRZ     HITC
+FAA   ; 27  MVR      SHL     BR               eine Spalte nach rechts
+DFA   ; 28           BRC     PTP              war Spalte 8: Punkt fuer den Spieler
+FA9   ; 29           SHL     BL
+FBA   ; 2A           ADC     BR
+C3A   ; 2B           GOTO    VERT
+905   ; 2C  HITC     CMPI    #0,AS
+E32   ; 2D           BRZ     HITW             Wand: immer zurueck, Winkel bleibt
+0DE   ; 2E           MOV     T,V
+61E   ; 2F           SUB     CP,V             V = Zeile - Schlaeger unten
+BE7   ; 30           CALL    HITR
+D27   ; 31           BRC     MVR              verfehlt
+102   ; 32  HITW     MOVI    #0,DX
+C36   ; 33           GOTO    MVL
+929   ; 34  BLEFT    CMPI    #2,BL            Spalte 2 vor dem Spieler?
+E78   ; 35           BRZ     HITP
+F9A   ; 36  MVL      SHR     BR               eine Spalte nach links
+D70   ; 37           BRC     XL
+F99   ; 38           SHR     BL
+DF5   ; 39           BRC     PTC              war Spalte 1: Punkt fuer den Computer
+438   ; 3A  VERT     ADD     DY,Y             senkrecht, Abprall oben/unten
+D72   ; 3B           BRC     VC
+973   ; 3C           CMPI    #7,DY
+D74   ; 3D           BRC     VB               abwaerts unter 0
+08D   ; 3E  VT       MOV     Y,T
+F9D   ; 3F           SHR     T                T = Zeile 0-7
+
+902   ; 40  AI       CMPI    #0,DX
+E47   ; 41           BRZ     AL
+454   ; 42           ADD     AS,AA            Ball kommt: Stufe, Ueberlauf = Computer darf ziehen
+D8F   ; 43           BRC     AID
+90A   ; 44           CMPI    #0,BR
+D82   ; 45           BRC     RVN              Ball rechts: rechte Haelfte neu
+C4B   ; 46           GOTO    PLY
+90A   ; 47  AL       CMPI    #0,BR            Ball fliegt weg
+D82   ; 48           BRC     RVN
+989   ; 49           CMPI    #8,BL            eben nach Spalte 4 gewechselt: rechts loeschen
+E82   ; 4A           BRZ     RVN
+
+FDF   ; 4B  PLY      DIN     M                Taster 2 = hoch (2), Taster 3 = runter (4)
+36F   ; 4C           ANDI    #6,M
+E52   ; 4D           BRZ     LV
+92F   ; 4E           CMPI    #2,M
+EA0   ; 4F           BRZ     PUP
+94F   ; 50           CMPI    #4,M
+EA6   ; 51           BRZ     PDN              beide gedrueckt: nichts
+
+F0D   ; 52  LV       EXRL                     Fenster links: R0-R7 = Spalten 1-4
+11E   ; 53  L1       MOVI    #1,V
+09F   ; 54           MOV     BL,M
+E9D   ; 55           BRZ     LCHK             kein Ball links
+BC3   ; 56  LC       CALL    CLROP            Ball loeschen und neu zeichnen
+FDF   ; 57  FR       DIN     M                Matrix bereit?
+31F   ; 58           ANDI    #1,M
+E57   ; 59           BRZ     FR
+FEF   ; 5A           DOT     M                Startnibble 1
+F0E   ; 5B           EXRM                     R8-RF = Spalten 5-8
+FE0   ; 5C           DOT     r0
+FE8   ; 5D           DOT     r8
+FE1   ; 5E           DOT     r1
+FE9   ; 5F           DOT     r9
+FE2   ; 60           DOT     r2
+FEA   ; 61           DOT     rA
+FE3   ; 62           DOT     r3
+FEB   ; 63           DOT     rB
+FE4   ; 64           DOT     r4
+FEC   ; 65           DOT     rC
+FE5   ; 66           DOT     r5
+FED   ; 67           DOT     rD
+FE6   ; 68           DOT     r6
+FEE   ; 69           DOT     rE
+FE7   ; 6A           DOT     r7
+FEF   ; 6B           DOT     rF
+F0E   ; 6C           EXRM
+FEC   ; 6D           DOT     W                Endnibble 0 (W ist immer 0)
+F0D   ; 6E           EXRL
+C23   ; 6F           GOTO    TICK
+
+; ---------------------------------------------------------------- Teile
+189   ; 70  XL       MOVI    #8,BL            von Spalte 5 nach Spalte 4
+C3A   ; 71           GOTO    VERT
+973   ; 72  VC       CMPI    #7,DY
+D3E   ; 73           BRC     VT               abwaerts, normal
+F88   ; 74  VB       INV     Y                Abprall: Y spiegeln, DY umdrehen
+F83   ; 75           INV     DY
+513   ; 76           ADDI    #1,DY
+C3E   ; 77           GOTO    VT
+
+0DE   ; 78  HITP     MOV     T,V
+60E   ; 79           SUB     PP,V
+BE7   ; 7A           CALL    HITR
+D36   ; 7B           BRC     MVL              verfehlt
+112   ; 7C           MOVI    #1,DX
+905   ; 7D           CMPI    #0,AS
+D27   ; 7E           BRC     MVR
+516   ; 7F           ADDI    #1,CS            Wand: Treffer zaehlen (PS CS hexadezimal)
+FB7   ; 80           ADC     PS
+C27   ; 81           GOTO    MVR
+
+10E   ; 82  RVN      MOVI    #0,V             V = 0 (Zero 1): Schlaeger bleibt
+F0F   ; 83  RV       EXRA                     Fenster rechts: R0-R7 = Spalten 5-8
+F0E   ; 84           EXRM
+F0F   ; 85           EXRA
+E88   ; 86           BRZ     R1
+BAE   ; 87           CALL    PAD
+18E   ; 88  R1       MOVI    #8,V
+0AF   ; 89           MOV     BR,M
+BC3   ; 8A           CALL    CLROP
+F0F   ; 8B           EXRA
+F0E   ; 8C           EXRM
+F0F   ; 8D           EXRA
+C4B   ; 8E           GOTO    PLY
+8D1   ; 8F  AID      CMP     T,CP
+D96   ; 90           BRC     ADN              Ball unter dem Schlaeger
+01B   ; 91           MOV     CP,J
+52B   ; 92           ADDI    #2,J
+8BD   ; 93           CMP     J,T
+D99   ; 94           BRC     AUP              Ball ueber dem Schlaeger
+C82   ; 95           GOTO    RVN
+711   ; 96  ADN      SUBI    #1,CP
+01B   ; 97           MOV     CP,J
+C9B   ; 98           GOTO    AV
+01B   ; 99  AUP      MOV     CP,J
+511   ; 9A           ADDI    #1,CP
+18E   ; 9B  AV       MOVI    #8,V             Zero 0: Schlaeger ziehen
+C83   ; 9C           GOTO    RV
+91A   ; 9D  LCHK     CMPI    #1,BR            Ball eben nach Spalte 5: links loeschen
+E56   ; 9E           BRZ     LC
+C57   ; 9F           GOTO    FR
+
+950   ; A0  PUP      CMPI    #5,PP
+E52   ; A1           BRZ     LV
+00B   ; A2           MOV     PP,J
+510   ; A3           ADDI    #1,PP
+1FE   ; A4           MOVI    #F,V
+CAB   ; A5           GOTO    LVP
+900   ; A6  PDN      CMPI    #0,PP
+E52   ; A7           BRZ     LV
+710   ; A8           SUBI    #1,PP
+00B   ; A9           MOV     PP,J
+11E   ; AA           MOVI    #1,V
+F0D   ; AB  LVP      EXRL
+BAE   ; AC           CALL    PAD              Schlaeger ziehen
+C53   ; AD           GOTO    L1
+
+91B   ; AE  PAD      CMPI    #1,J             im Fenster: R(J) += V, R(J+3) -= V
+DB7   ; AF           BRC     P234
+EB4   ; B0           BRZ     P1
+4E0   ; B1           ADD     V,r0
+6E3   ; B2           SUB     V,r3
+F07   ; B3           RET
+4E1   ; B4  P1       ADD     V,r1
+6E4   ; B5           SUB     V,r4
+F07   ; B6           RET
+93B   ; B7  P234     CMPI    #3,J
+DC0   ; B8           BRC     P4
+EBD   ; B9           BRZ     P3
+4E2   ; BA           ADD     V,r2
+6E5   ; BB           SUB     V,r5
+F07   ; BC           RET
+4E3   ; BD  P3       ADD     V,r3
+6E6   ; BE           SUB     V,r6
+F07   ; BF           RET
+4E4   ; C0  P4       ADD     V,r4
+6E7   ; C1           SUB     V,r7
+F07   ; C2           RET
+
+AFE   ; C3  CLROP    OR      M,V              im Fenster: V = Maske Schlaeger + neuer Ball M
+93D   ; C4           CMPI    #3,T             Ball M in Zeile T setzen, dann Zeilen T-1 bis 7
+DD0   ; C5           BRC     C47              mit V maskieren (alter Ball lag in T-1, T oder T+1)
+ECE   ; C6           BRZ     C3
+91D   ; C7           CMPI    #1,T
+DCC   ; C8           BRC     C2
+EDD   ; C9           BRZ     C1
+AF0   ; CA           OR      M,r0
+CDE   ; CB           GOTO    A0
+AF2   ; CC  C2       OR      M,r2
+CDF   ; CD           GOTO    A1
+AF3   ; CE  C3       OR      M,r3
+CE0   ; CF           GOTO    A2
+95D   ; D0  C47      CMPI    #5,T
+DD7   ; D1           BRC     C67
+ED5   ; D2           BRZ     C5
+AF4   ; D3           OR      M,r4
+CE1   ; D4           GOTO    A3
+AF5   ; D5  C5       OR      M,r5
+CE2   ; D6           GOTO    A4
+96D   ; D7  C67      CMPI    #6,T
+EDB   ; D8           BRZ     C6
+AF7   ; D9           OR      M,r7
+CE4   ; DA           GOTO    A6
+AF6   ; DB  C6       OR      M,r6
+CE3   ; DC           GOTO    A5
+AF1   ; DD  C1       OR      M,r1
+2E0   ; DE  A0       AND     V,r0
+2E1   ; DF  A1       AND     V,r1
+2E2   ; E0  A2       AND     V,r2
+2E3   ; E1  A3       AND     V,r3
+2E4   ; E2  A4       AND     V,r4
+2E5   ; E3  A5       AND     V,r5
+2E6   ; E4  A6       AND     V,r6
+2E7   ; E5           AND     V,r7
+F07   ; E6           RET
+
+92E   ; E7  HITR     CMPI    #2,V             V = Zeile - Schlaeger: 0 unten, 1 Mitte, 2 oben
+DF4   ; E8           BRC     HRET             sonst (auch negativ = B-F) verfehlt, Carry 1
+71E   ; E9           SUBI    #1,V
+4EE   ; EA           ADD     V,V
+EEF   ; EB           BRZ     HMID
+0E3   ; EC           MOV     V,DY             Kante: steil weg von der Mitte (E bzw. 2)
+F0A   ; ED           RSC
+F07   ; EE           RET
+973   ; EF  HMID     CMPI    #7,DY            Mitte: flach, Richtung bleibt (1 bzw. F)
+103   ; F0           MOVI    #0,DY
+FC3   ; F1           SUBC    DY
+433   ; F2           ADD     DY,DY
+513   ; F3           ADDI    #1,DY
+F07   ; F4  HRET     RET
+
+905   ; F5  PTC      CMPI    #0,AS
+EFC   ; F6           BRZ     PNT              Wand: Spielende
+516   ; F7           ADDI    #1,CS
+996   ; F8           CMPI    #9,CS
+CFC   ; F9           GOTO    PNT
+517   ; FA  PTP      ADDI    #1,PS
+997   ; FB           CMPI    #9,PS
+F26   ; FC  PNT      DISP    #2,CS            Spielstand Spieler Computer
+EFD   ; FD  END      BRZ     END              9 erreicht: bleibt stehen
+FFE   ; FE           KIN     V
+C01   ; FF           GOTO    NEWB
