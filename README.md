@@ -2,12 +2,12 @@
 
 Pong für den Busch Microtronic 2090 mit dem [ESP2090 Studio](https://github.com/rab-berlin/ESP2090) (8x8-LED-Matrix) und 2 Tastern: der Spieler links gegen den Computer rechts in 15 Spielstufen, oder allein gegen die Wand.
 
-- 213 Programmschritte, 43 frei
-- Dateien: [pong.mic](pong.mic) (Version 02), die Quelle [pong.src](pong.src) mit Sprungmarken und die Arbeitsbeschreibung [pong.xml](pong.xml)
+- 237 Programmschritte, 19 frei
+- Dateien: [pong.mic](pong.mic) (Version 03) und die Arbeitsbeschreibung [pong.xml](pong.xml)
 
 ## Spiel
 
-- **Spielstufe:** die erste Hex-Taste nach RUN. 1-F spielt gegen den Computer, je höher, desto stärker. 0 ist das Spiel allein gegen die Wand.
+- **Spielstufe:** die erste Hex-Taste nach RUN. 1-F spielt gegen den Computer, je höher, desto weniger Fehler macht er. 0 ist das Spiel allein gegen die Wand.
 - **Schläger:** je 3 LEDs hoch und grün, der eigene in Spalte 1, der des Computers in Spalte 8.
 - **Ball:** gelb.
 - **Winkel:** Ein Treffer mit der Schlägermitte spielt flach zurück. Mit der oberen oder unteren Kante geht der Ball steil zurück, weg von der Mitte. Oben und unten prallt der Ball ab.
@@ -30,18 +30,18 @@ RESET, Matrix einschalten („LED on“ in der Weboberfläche, im [Emulator2090]
 
 ## Technik: Zeichenbefehle statt ganzer Bilder
 
-Version 01 schickte nach jedem Schritt das ganze Bild (16 Register). Version 02 ist neu geschrieben und sendet nur, was sich ändert:
+Version 01 schickte nach jedem Schritt das ganze Bild (16 Register). Seit Version 02 ist das Programm neu geschrieben und sendet nur, was sich ändert:
 
 - **Die Matrix merkt sich das Bild.** Das Programm braucht keinen Bildspeicher mehr, nur noch die Lage von Ball und Schlägern.
 - **Bewegung = zwei Punkte.** Bewegt sich der Ball oder ein Schläger um ein Feld, schaltet das Programm den alten Punkt aus und den neuen an (ACK 4, zwei Befehle direkt hintereinander).
 - **Farben ohne Umschalten.** Am Anfang setzt das Programm einmal die Farbmatrix: alles grün, Spalte 2-7 gelb. Danach schalten die Befehle nur noch Pixel an und aus, die Farbe kommt aus der Farbmatrix. Der Ball ist deshalb gelb und die Schläger grün, ohne dass die Farbe im Spiel je gewechselt wird.
 - **Matrix dauernd aktiv.** Die Taster liegen an Eingang 2 und 3, Eingang 1 bleibt für die Anfrage der Matrix (REQ). Schlafen und Wecken braucht das Programm nicht.
 
-Im Emulator dauert ein Ballschritt im Mittel 0,66 s (Version 01: 0,95 s), und die Taster werden etwa alle 0,3 s gelesen statt einmal je Schritt.
+Im Emulator dauert ein Ballschritt im Mittel 0,82 s (Version 01: 0,95 s), und die Taster werden etwa alle 0,4 s gelesen statt einmal je Schritt. Ein gutes Stück der Zeit kostet der Computergegner, der fast bei jedem Schritt zieht.
 
 ## Wie es gemacht ist
 
-Der 2090 rechnet nur mit ganzen Zahlen von 0 bis 15, kennt keine indirekte Adressierung und merkt sich nur eine Rücksprungadresse. Ein paar Kniffe, mit denen Pong trotzdem in 213 Schritte passt:
+Der 2090 rechnet nur mit ganzen Zahlen von 0 bis 15, kennt keine indirekte Adressierung und merkt sich nur eine Rücksprungadresse. Ein paar Kniffe, mit denen Pong trotzdem in 237 Schritte passt:
 
 ### Schräge Bahnen ohne Brüche: die Idee von Bresenham
 
@@ -53,11 +53,17 @@ Das ist Bresenham in seiner einfachsten Form, mit nur zwei möglichen Steigungen
 
 Der Abprall oben und unten nutzt den Überlauf: Läuft BY beim Addieren über 15 oder unter 0, zeigt das der Carry. Dann wird die Höhe gespiegelt (`INV`) und die Richtung umgedreht.
 
-### Die Spielstärke des Computers: noch einmal dieselbe Idee
+### Ein Gegner, der Fehler macht
 
-Der Computer soll je nach Stufe in 1 bis 15 von 16 Ballschritten ziehen dürfen, und zwar gleichmäßig verteilt, nicht in Schüben. Dafür addiert das Programm bei jedem Schritt die Stufe auf einen Zähler (`ADD AS,AA`). Läuft er über, darf der Computer ziehen. Bei Stufe 8 ist das jeder zweite Schritt, bei Stufe 12 drei von vier, bei Stufe 3 etwa jeder fünfte. Auch das ist Bresenhams Prinzip: einen Bruch (Stufe/16) durch Aufsummieren und Überlauf gleichmäßig verteilen. Ein Würfel wäre teurer und ungleichmäßiger.
+Ein Computergegner, der immer richtig zieht, ist langweilig, und einer, der nur selten ziehen darf, ist kein Gegner. Der Computer spielt deshalb wie ein Mensch: Er will bei jedem Ballschritt das Richtige tun, ist aber nicht immer bei der Sache.
 
-Der Computer zieht nur, wenn der Ball auf ihn zufliegt und über oder unter seinem Schläger ist. Dadurch kann er nie über den Rand hinaus, eine Randprüfung entfällt.
+- **Was er will:** Fliegt der Ball auf ihn zu, zieht er eine Reihe zum Ball, sobald der über oder unter seinem Schläger ist. Fliegt der Ball weg, schaut er auf den Gegner: In einem von vier Schritten geht er dem Schläger des Spielers nach. So steht er nie starr herum.
+- **Wie konzentriert er ist:** Bei jedem Schritt würfelt das Programm (`RND`). Die Spielstufe bestimmt, wie oft er unkonzentriert ist: bei Stufe 1 in knapp der Hälfte der Schritte, bei Stufe 8 in einem Viertel, bei Stufe F fast nie.
+- **Was dann passiert:** Unkonzentriert zögert er in der Hälfte der Fälle, also kein Zug. In einem Viertel zieht er in die falsche Richtung, und in einem Viertel macht er es trotzdem richtig.
+
+Auch auf Stufe 1 trifft er damit die meisten Bälle, verliert aber gegen einen aufmerksamen Spieler. Auf Stufe F macht er kaum Fehler.
+
+Der Würfel `RND` legt seine drei Ziffern immer in den Registern D, E und F ab. Dort stehen im Programm deshalb nur Hilfswerte, die gerade nicht gebraucht werden. Der Zustand des Spiels liegt in anderen Registern.
 
 ### Der Treffer: drei Fälle aus einer Subtraktion
 
@@ -82,5 +88,3 @@ Alle 16 Register sind im Spiel belegt. Die Punkte liegen deshalb in den Speicher
 ### Ein Register, das immer 0 ist
 
 Nach jedem Befehl müssen die Ausgänge auf 0. R0 wird im ganzen Programm nie beschrieben und ist nach dem Einschalten 0. Ein `DOT` von R0 spart jedes Mal das vorherige `MOVI 0`.
-
-Die `.mic` wird mit dem Mini-Assembler `micasm.py` aus `pong.src` erzeugt.

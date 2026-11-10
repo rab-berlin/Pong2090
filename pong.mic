@@ -1,6 +1,7 @@
 ; pong - Pong fuer Busch Microtronic 2090 mit dem ESP2090 Studio (8x8-LED-Matrix) und 2 Tastern
+;  Version 03: Computer mit menschlicherer Spielweise (zieht bei jedem Ballschritt, macht je nach Stufe
+;    zufaellige Fehler, geht dem Schlaeger des Spielers nach, wenn der Ball wegfliegt).
 ;  Version 02: neu geschrieben mit Zeichenbefehlen statt ganzer Bilder (Blockmodus).
-;   Quelle: pong.src, erzeugt mit dem Mini-Assembler micasm.py (esp2090-firmware/tools)
 ; 
 ;  Start: Reset, Matrix einschalten (Weboberflaeche: LED on, Emulator2090: m), RUN,
 ;    dann die Spielstufe als Hex-Taste: 1-F gegen den Computer (je hoeher, desto staerker),
@@ -11,8 +12,10 @@
 ;  Winkel: Treffer mit der Schlaegermitte = flach (1 Reihe je 2 Spalten), Richtung bleibt;
 ;    mit der oberen oder unteren Kante = steil (1 Reihe je Spalte) weg von der Mitte.
 ;    Oben und unten prallt der Ball ab. Aufschlag aus Spalte 4, Hoehe und Richtung zufaellig.
-;  Computer: zieht nur, solange der Ball auf ihn zufliegt, je Ballschritt mit Wahrscheinlichkeit
-;    Stufe/16 und nur, wenn der Ball ueber oder unter seinem Schlaeger ist.
+;  Computer: Fliegt der Ball auf ihn zu, zieht er bei jedem Ballschritt eine Reihe zum Ball, wenn der
+;    ueber oder unter seinem Schlaeger ist. Fliegt der Ball weg, geht er in einem von vier Schritten
+;    dem Schlaeger des Spielers nach. Je niedriger die Stufe, desto oefter ist er unkonzentriert:
+;    dann zoegert er meist, zieht manchmal in die falsche Richtung und manchmal trotzdem richtig.
 ;  Punkt: Ball in Spalte 1 bzw. 8. Anzeige Spieler Computer, weiter mit einer Hex-Taste.
 ;    Bei 9 Punkten bleibt der Endstand stehen. Neues Spiel: Reset, RUN.
 ;  Wand (Stufe 0): der erste Fehler beendet das Spiel; Anzeige = Treffer hexadezimal (00-FF).
@@ -27,220 +30,245 @@
 ; 
 ;  Register (untere Bank R0-R7 im Spiel; fuer den Spielstand wird sie mit EXRL gegen M0-M7 getauscht):
 ;    Z immer 0 (Ausgaenge auf 0), FUNC = ACK (im Spiel immer 4), X/Y = Punkt an, XA/YA = Punkt aus,
-;    DX 0 = Ball fliegt nach links, AA Zaehler des Computers; CS/PS Punkte (in M6/M7, nur nach EXRL);
-;    PP/CP unterste Reihe der Schlaeger 0-5, DY senkrecht je Schritt in halben Reihen (1, 2 auf, F, E ab),
-;    AS Spielstufe, BX Spalte des Balls 0-7, T Reihe des Balls + 8, V Hilfsregister, BY Hoehe 0-F (Reihe = BY/2).
+;    T Reihe des Balls + 8, BY Hoehe 0-F (Reihe = BY/2), DX 0 = Ball fliegt nach links;
+;    CS/PS Punkte (in M6/M7, nur nach EXRL); PP/CP unterste Reihe der Schlaeger 0-5,
+;    DY senkrecht je Schritt in halben Reihen (1, 2 auf, F, E ab), AS Spielstufe, BX Spalte des Balls 0-7,
+;    V Hilfsregister. XA, V, YA sind die Register D, E, F: RND legt dort die Zufallsziffern ab.
 ;
 FFB ; 00 begin:         KIN AS              Spielstufe 0-F (0 = Wand)
 F02 ; 01                DISOUT              Anzeige aus: 9,3 ms je Befehl (Takt der Matrix)
 1E1 ; 02                MOVI #E,FUNC        Farbmatrix einmal setzen: ACK 14, Farbe 4 = gruen
 142 ; 03                MOVI #4,X
-BCD ; 04                CALL cmd
+BE5 ; 04                CALL cmd
 131 ; 05                MOVI #3,FUNC        ACK 3, Art 0: ganze Farbmatrix gruen (nichts leuchtet)
 102 ; 06                MOVI #0,X
-BCD ; 07                CALL cmd
+BE5 ; 07                CALL cmd
 1E1 ; 08                MOVI #E,FUNC        ACK 14, Farbe 3 = gelb
 132 ; 09                MOVI #3,X
-BCD ; 0A                CALL cmd
+BE5 ; 0A                CALL cmd
 141 ; 0B                MOVI #4,FUNC        Cursor 1 = (1,0), Art 0 (Y ist hier 0)
 112 ; 0C                MOVI #1,X
-BCD ; 0D                CALL cmd
+BE5 ; 0D                CALL cmd
 161 ; 0E                MOVI #6,FUNC        Rechteck bis (6,7), Art 0: Spalte 2-7 gelb
 162 ; 0F                MOVI #6,X
 173 ; 10                MOVI #7,Y
-BCD ; 11                CALL cmd
+BE5 ; 11                CALL cmd
 F02 ; 12 newb:          DISOUT              nach der Punkteanzeige wieder aus
 128 ; 13                MOVI #2,PP
 129 ; 14                MOVI #2,CP
 131 ; 15                MOVI #3,FUNC        ACK 3, Art 3: alle Pixel aus, Farben bleiben
 132 ; 16                MOVI #3,X
-BCD ; 17                CALL cmd
+BE5 ; 17                CALL cmd
 141 ; 18                MOVI #4,FUNC        Schlaeger links: Punkt (0,2) an ...
 102 ; 19                MOVI #0,X
 1A3 ; 1A                MOVI #A,Y
-BCD ; 1B                CALL cmd
+BE5 ; 1B                CALL cmd
 161 ; 1C                MOVI #6,FUNC        ... Rechteck bis (0,4) an
 1C3 ; 1D                MOVI #C,Y
-BCD ; 1E                CALL cmd
+BE5 ; 1E                CALL cmd
 141 ; 1F                MOVI #4,FUNC        rechts: Schlaeger ab (7,2) ...
 172 ; 20                MOVI #7,X
 1A3 ; 21                MOVI #A,Y
 90B ; 22                CMPI #0,AS
 D25 ; 23                BRC nb1
 183 ; 24                MOVI #8,Y           ... oder Wand ab (7,0)
-BCD ; 25 nb1:           CALL cmd
+BE5 ; 25 nb1:           CALL cmd
 161 ; 26                MOVI #6,FUNC
 1C3 ; 27                MOVI #C,Y           Schlaeger bis (7,4)
 90B ; 28                CMPI #0,AS
 D2B ; 29                BRC nb2
 1F3 ; 2A                MOVI #F,Y           Wand bis (7,7)
-BCD ; 2B nb2:           CALL cmd
+BE5 ; 2B nb2:           CALL cmd
 141 ; 2C                MOVI #4,FUNC        ab jetzt nur noch Punkte
-F05 ; 2D                RND                 Aufschlag: T, V, BY zufaellig
+F05 ; 2D                RND                 Aufschlag: XA, V, YA zufaellig
 F9E ; 2E                SHR V
 11A ; 2F                MOVI #1,DY          aufwaerts, flach oder steil
 FBA ; 30                ADC DY
-0D6 ; 31                MOV T,DX            Richtung zufaellig
+0D6 ; 31                MOV XA,DX           Richtung zufaellig
 316 ; 32                ANDI #1,DX
-13C ; 33                MOVI #3,BX          Spalte 4
-0FD ; 34                MOV BY,T            Reihe + 8
-F9D ; 35                SHR T
-58D ; 36                ADDI #8,T
-0C2 ; 37                MOV BX,X            Ball an
-0D3 ; 38                MOV T,Y
-BCD ; 39                CALL cmd
-BAC ; 3A loop:          CALL ply            Taster
-0C4 ; 3B                MOV BX,XA           Ball: alter Punkt (aus)
-584 ; 3C                ADDI #8,XA
-0D5 ; 3D                MOV T,YA
-906 ; 3E                CMPI #0,DX
-E4E ; 3F                BRZ bleft
-96C ; 40                CMPI #6,BX          Spalte 7 vor dem Computer?
-E46 ; 41                BRZ hitc
-97C ; 42 mvr:           CMPI #7,BX          war Spalte 8: Punkt fuer den Spieler
-EA4 ; 43                BRZ ptp
-51C ; 44                ADDI #1,BX
-C53 ; 45                GOTO vert
-90B ; 46 hitc:          CMPI #0,AS
-E4C ; 47                BRZ hitw            Wand: immer zurueck, Winkel bleibt
-0DE ; 48                MOV T,V
-69E ; 49                SUB CP,V            V = Reihe + 8 - Schlaeger
-B8F ; 4A                CALL hitr
-D42 ; 4B                BRC mvr             verfehlt
-106 ; 4C hitw:          MOVI #0,DX
-C50 ; 4D                GOTO mvl
-91C ; 4E bleft:         CMPI #1,BX          Spalte 2 vor dem Spieler?
-E83 ; 4F                BRZ hitp
-90C ; 50 mvl:           CMPI #0,BX          war Spalte 1: Punkt fuer den Computer
-E9E ; 51                BRZ ptc
-71C ; 52                SUBI #1,BX
-4AF ; 53 vert:          ADD DY,BY           senkrecht, Abprall oben und unten
-D7D ; 54                BRC vc
-97A ; 55                CMPI #7,DY
-D7F ; 56                BRC vb              abwaerts unter 0
-0FD ; 57 vt:            MOV BY,T
-F9D ; 58                SHR T
-58D ; 59                ADDI #8,T
-0C2 ; 5A                MOV BX,X            neuer Punkt (an)
-0D3 ; 5B                MOV T,Y
-BC6 ; 5C                CALL move
-BAC ; 5D                CALL ply            Taster, zweites Mal
-906 ; 5E                CMPI #0,DX
-E3A ; 5F                BRZ loop            Ball fliegt weg
-4B7 ; 60                ADD AS,AA           Stufe, Ueberlauf = Computer darf ziehen
-D63 ; 61                BRC aid
-C3A ; 62                GOTO loop
-0DE ; 63 aid:           MOV T,V
-78E ; 64                SUBI #8,V           Reihe des Balls
-8E9 ; 65                CMP V,CP
-D6C ; 66                BRC adn             Ball unter dem Schlaeger
-093 ; 67                MOV CP,Y
-523 ; 68                ADDI #2,Y
-83E ; 69                CMP Y,V
-D74 ; 6A                BRC aup             Ball ueber dem Schlaeger
-C3A ; 6B                GOTO loop
-1F4 ; 6C adn:           MOVI #F,XA          runter: oberste Reihe aus
-095 ; 6D                MOV CP,YA
-5A5 ; 6E                ADDI #A,YA
-719 ; 6F                SUBI #1,CP
-172 ; 70                MOVI #7,X           neue unterste Reihe an
-093 ; 71                MOV CP,Y
-583 ; 72                ADDI #8,Y
-C7B ; 73                GOTO amv
-1F4 ; 74 aup:           MOVI #F,XA          hoch: unterste Reihe aus
-095 ; 75                MOV CP,YA
-585 ; 76                ADDI #8,YA
-519 ; 77                ADDI #1,CP
-172 ; 78                MOVI #7,X           neue oberste Reihe an
-093 ; 79                MOV CP,Y
-5A3 ; 7A                ADDI #A,Y
-BC6 ; 7B amv:           CALL move
-C3A ; 7C                GOTO loop
-97A ; 7D vc:            CMPI #7,DY
-D57 ; 7E                BRC vt              abwaerts, normal
-F8F ; 7F vb:            INV BY              Abprall: Hoehe spiegeln, Richtung umdrehen
-F8A ; 80                INV DY
-51A ; 81                ADDI #1,DY
-C57 ; 82                GOTO vt
-0DE ; 83 hitp:          MOV T,V
-68E ; 84                SUB PP,V
-B8F ; 85                CALL hitr
-D50 ; 86                BRC mvl             verfehlt
-116 ; 87                MOVI #1,DX
-90B ; 88                CMPI #0,AS
-D42 ; 89                BRC mvr
-F0D ; 8A                EXRL                Wand: Treffer zaehlen (PS CS hexadezimal, in M6/M7)
-516 ; 8B                ADDI #1,CS
-FB7 ; 8C                ADC PS
-F0D ; 8D                EXRL
-C42 ; 8E                GOTO mvr
-78E ; 8F hitr:          SUBI #8,V           V = Reihe - Schlaeger: 0 unten, 1 Mitte, 2 oben
-92E ; 90                CMPI #2,V
-D9D ; 91                BRC hret            sonst (auch negativ = B-F) verfehlt, Carry 1
-71E ; 92                SUBI #1,V
-4EE ; 93                ADD V,V
-E98 ; 94                BRZ hmid
-0EA ; 95                MOV V,DY            Kante: steil weg von der Mitte (E bzw. 2)
-F0A ; 96                RSC
-F07 ; 97                RET
-97A ; 98 hmid:          CMPI #7,DY          Mitte: flach, Richtung bleibt (1 bzw. F)
-10A ; 99                MOVI #0,DY
-FCA ; 9A                SUBC DY
-4AA ; 9B                ADD DY,DY
-51A ; 9C                ADDI #1,DY
-F07 ; 9D hret:          RET
-90B ; 9E ptc:           CMPI #0,AS
-F0D ; 9F                EXRL                Spielstand nach R6/R7 (Flags bleiben)
-EA7 ; A0                BRZ pnt             Wand: Spielende
-516 ; A1                ADDI #1,CS
-996 ; A2                CMPI #9,CS
-CA7 ; A3                GOTO pnt
-F0D ; A4 ptp:           EXRL
-517 ; A5                ADDI #1,PS
-997 ; A6                CMPI #9,PS
-F26 ; A7 pnt:           DISP #2,CS          Spielstand Spieler Computer
-EA8 ; A8 end:           BRZ end             9 erreicht: bleibt stehen
-FFE ; A9                KIN V
-F0D ; AA                EXRL                Spielregister zurueck
-C12 ; AB                GOTO newb
-FDE ; AC ply:           DIN V               Taster 2 = hoch (2), Taster 3 = runter (4); Eingang 1 ist REQ
-36E ; AD                ANDI #6,V
-92E ; AE                CMPI #2,V
-EB3 ; AF                BRZ pup
-94E ; B0                CMPI #4,V
-EBD ; B1                BRZ pdn             keiner oder beide: nichts
-F07 ; B2 pret:          RET
-958 ; B3 pup:           CMPI #5,PP
-EB2 ; B4                BRZ pret
-184 ; B5                MOVI #8,XA          hoch: unterste Reihe aus
-085 ; B6                MOV PP,YA
-585 ; B7                ADDI #8,YA
-518 ; B8                ADDI #1,PP
-102 ; B9                MOVI #0,X           neue oberste Reihe an
-083 ; BA                MOV PP,Y
-5A3 ; BB                ADDI #A,Y
-CC6 ; BC                GOTO move           das RET von move kehrt zum Aufrufer von ply zurueck
-908 ; BD pdn:           CMPI #0,PP
-EB2 ; BE                BRZ pret
-184 ; BF                MOVI #8,XA          runter: oberste Reihe aus
-085 ; C0                MOV PP,YA
-5A5 ; C1                ADDI #A,YA
-718 ; C2                SUBI #1,PP
-102 ; C3                MOVI #0,X           neue unterste Reihe an
-083 ; C4                MOV PP,Y
-583 ; C5                ADDI #8,Y
-FDE ; C6 move:          DIN V               zwei Befehle: Punkt (XA,YA) aus, dann Punkt (X,Y) an
-31E ; C7                ANDI #1,V
-EC6 ; C8                BRZ move            warten auf REQ
-FE1 ; C9                DOT FUNC            ACK
-FE4 ; CA                DOT XA
-FE5 ; CB                DOT YA
-FE0 ; CC                DOT Z               Ausgaenge auf 0
-FDE ; CD cmd:           DIN V               ein Befehl: ACK FUNC mit X, Y
-31E ; CE                ANDI #1,V
-ECD ; CF                BRZ cmd
-FE1 ; D0                DOT FUNC
-FE2 ; D1                DOT X
-FE3 ; D2                DOT Y               bei Befehlen mit einem Nibble ohne Bedeutung
-FE0 ; D3                DOT Z
-F07 ; D4                RET
+0F5 ; 33                MOV YA,BY           Hoehe zufaellig
+13C ; 34                MOVI #3,BX          Spalte 4
+054 ; 35                MOV BY,T            Reihe + 8
+F94 ; 36                SHR T
+584 ; 37                ADDI #8,T
+0C2 ; 38                MOV BX,X            Ball an
+043 ; 39                MOV T,Y
+BE5 ; 3A                CALL cmd
+BC4 ; 3B loop:          CALL ply            Taster
+0CD ; 3C                MOV BX,XA           Ball: alter Punkt (aus)
+58D ; 3D                ADDI #8,XA
+04F ; 3E                MOV T,YA
+906 ; 3F                CMPI #0,DX
+E4F ; 40                BRZ bleft
+96C ; 41                CMPI #6,BX          Spalte 7 vor dem Computer?
+E47 ; 42                BRZ hitc
+97C ; 43 mvr:           CMPI #7,BX          war Spalte 8: Punkt fuer den Spieler
+EBC ; 44                BRZ ptp
+51C ; 45                ADDI #1,BX
+C54 ; 46                GOTO vert
+90B ; 47 hitc:          CMPI #0,AS
+E4D ; 48                BRZ hitw            Wand: immer zurueck, Winkel bleibt
+04E ; 49                MOV T,V
+69E ; 4A                SUB CP,V            V = Reihe + 8 - Schlaeger
+BA7 ; 4B                CALL hitr
+D43 ; 4C                BRC mvr             verfehlt
+106 ; 4D hitw:          MOVI #0,DX
+C51 ; 4E                GOTO mvl
+91C ; 4F bleft:         CMPI #1,BX          Spalte 2 vor dem Spieler?
+E9B ; 50                BRZ hitp
+90C ; 51 mvl:           CMPI #0,BX          war Spalte 1: Punkt fuer den Computer
+EB6 ; 52                BRZ ptc
+71C ; 53                SUBI #1,BX
+4A5 ; 54 vert:          ADD DY,BY           senkrecht, Abprall oben und unten
+D95 ; 55                BRC vc
+97A ; 56                CMPI #7,DY
+D97 ; 57                BRC vb              abwaerts unter 0
+054 ; 58 vt:            MOV BY,T
+F94 ; 59                SHR T
+584 ; 5A                ADDI #8,T
+0C2 ; 5B                MOV BX,X            neuer Punkt (an)
+043 ; 5C                MOV T,Y
+BDE ; 5D                CALL move
+BC4 ; 5E                CALL ply            Taster, zweites Mal
+F05 ; 5F                RND                 drei Zufallsziffern in XA, V, YA
+043 ; 60                MOV T,Y             Ziel: Reihe des Balls ...
+783 ; 61                SUBI #8,Y
+906 ; 62                CMPI #0,DX
+D69 ; 63                BRC ai1             ... wenn er kommt
+9BE ; 64                CMPI #B,V           Ball fliegt weg: nur in einem von vier Schritten (V = C-F)
+D67 ; 65                BRC ai0
+C3B ; 66                GOTO loop
+083 ; 67 ai0:           MOV PP,Y            dann dem Schlaeger des Spielers nach (dessen Mitte)
+513 ; 68                ADDI #1,Y
+8DB ; 69 ai1:           CMP XA,AS           konzentriert mit Wahrscheinlichkeit Stufe/16
+D72 ; 6A                BRC ai3
+F9E ; 6B                SHR V               sonst in der Haelfte der Faelle trotzdem
+D72 ; 6C                BRC ai3
+33F ; 6D                ANDI #3,YA          unkonzentriert: 0 = falsche Richtung,
+E79 ; 6E                BRZ ai5
+93F ; 6F                CMPI #3,YA          3 = doch richtig, 1 und 2 = zoegern
+E72 ; 70                BRZ ai3
+C3B ; 71                GOTO loop
+839 ; 72 ai3:           CMP Y,CP            richtig: Ziel unter dem Schlaeger -> runter
+D80 ; 73                BRC adn
+092 ; 74                MOV CP,X
+522 ; 75                ADDI #2,X
+823 ; 76                CMP X,Y             Ziel ueber dem Schlaeger -> hoch
+D8A ; 77                BRC aup
+C3B ; 78                GOTO loop
+839 ; 79 ai5:           CMP Y,CP            falsch herum
+D8A ; 7A                BRC aup
+092 ; 7B                MOV CP,X
+522 ; 7C                ADDI #2,X
+823 ; 7D                CMP X,Y
+D80 ; 7E                BRC adn
+C3B ; 7F                GOTO loop
+909 ; 80 adn:           CMPI #0,CP          runter (nicht ueber den Rand): oberste Reihe aus
+E3B ; 81                BRZ loop
+1FD ; 82                MOVI #F,XA
+09F ; 83                MOV CP,YA
+5AF ; 84                ADDI #A,YA
+719 ; 85                SUBI #1,CP
+172 ; 86                MOVI #7,X           neue unterste Reihe an
+093 ; 87                MOV CP,Y
+583 ; 88                ADDI #8,Y
+C93 ; 89                GOTO amv
+959 ; 8A aup:           CMPI #5,CP          hoch: unterste Reihe aus
+E3B ; 8B                BRZ loop
+1FD ; 8C                MOVI #F,XA
+09F ; 8D                MOV CP,YA
+58F ; 8E                ADDI #8,YA
+519 ; 8F                ADDI #1,CP
+172 ; 90                MOVI #7,X           neue oberste Reihe an
+093 ; 91                MOV CP,Y
+5A3 ; 92                ADDI #A,Y
+BDE ; 93 amv:           CALL move
+C3B ; 94                GOTO loop
+97A ; 95 vc:            CMPI #7,DY
+D58 ; 96                BRC vt              abwaerts, normal
+F85 ; 97 vb:            INV BY              Abprall: Hoehe spiegeln, Richtung umdrehen
+F8A ; 98                INV DY
+51A ; 99                ADDI #1,DY
+C58 ; 9A                GOTO vt
+04E ; 9B hitp:          MOV T,V
+68E ; 9C                SUB PP,V
+BA7 ; 9D                CALL hitr
+D51 ; 9E                BRC mvl             verfehlt
+116 ; 9F                MOVI #1,DX
+90B ; A0                CMPI #0,AS
+D43 ; A1                BRC mvr
+F0D ; A2                EXRL                Wand: Treffer zaehlen (PS CS hexadezimal, in M6/M7)
+516 ; A3                ADDI #1,CS
+FB7 ; A4                ADC PS
+F0D ; A5                EXRL
+C43 ; A6                GOTO mvr
+78E ; A7 hitr:          SUBI #8,V           V = Reihe - Schlaeger: 0 unten, 1 Mitte, 2 oben
+92E ; A8                CMPI #2,V
+DB5 ; A9                BRC hret            sonst (auch negativ = B-F) verfehlt, Carry 1
+71E ; AA                SUBI #1,V
+4EE ; AB                ADD V,V
+EB0 ; AC                BRZ hmid
+0EA ; AD                MOV V,DY            Kante: steil weg von der Mitte (E bzw. 2)
+F0A ; AE                RSC
+F07 ; AF                RET
+97A ; B0 hmid:          CMPI #7,DY          Mitte: flach, Richtung bleibt (1 bzw. F)
+10A ; B1                MOVI #0,DY
+FCA ; B2                SUBC DY
+4AA ; B3                ADD DY,DY
+51A ; B4                ADDI #1,DY
+F07 ; B5 hret:          RET
+90B ; B6 ptc:           CMPI #0,AS
+F0D ; B7                EXRL                Spielstand nach R6/R7 (Flags bleiben)
+EBF ; B8                BRZ pnt             Wand: Spielende
+516 ; B9                ADDI #1,CS
+996 ; BA                CMPI #9,CS
+CBF ; BB                GOTO pnt
+F0D ; BC ptp:           EXRL
+517 ; BD                ADDI #1,PS
+997 ; BE                CMPI #9,PS
+F26 ; BF pnt:           DISP #2,CS          Spielstand Spieler Computer
+EC0 ; C0 end:           BRZ end             9 erreicht: bleibt stehen
+FFE ; C1                KIN V
+F0D ; C2                EXRL                Spielregister zurueck
+C12 ; C3                GOTO newb
+FDE ; C4 ply:           DIN V               Taster 2 = hoch (2), Taster 3 = runter (4); Eingang 1 ist REQ
+36E ; C5                ANDI #6,V
+92E ; C6                CMPI #2,V
+ECB ; C7                BRZ pup
+94E ; C8                CMPI #4,V
+ED5 ; C9                BRZ pdn             keiner oder beide: nichts
+F07 ; CA pret:          RET
+958 ; CB pup:           CMPI #5,PP
+ECA ; CC                BRZ pret
+18D ; CD                MOVI #8,XA          hoch: unterste Reihe aus
+08F ; CE                MOV PP,YA
+58F ; CF                ADDI #8,YA
+518 ; D0                ADDI #1,PP
+102 ; D1                MOVI #0,X           neue oberste Reihe an
+083 ; D2                MOV PP,Y
+5A3 ; D3                ADDI #A,Y
+CDE ; D4                GOTO move           das RET von move kehrt zum Aufrufer von ply zurueck
+908 ; D5 pdn:           CMPI #0,PP
+ECA ; D6                BRZ pret
+18D ; D7                MOVI #8,XA          runter: oberste Reihe aus
+08F ; D8                MOV PP,YA
+5AF ; D9                ADDI #A,YA
+718 ; DA                SUBI #1,PP
+102 ; DB                MOVI #0,X           neue unterste Reihe an
+083 ; DC                MOV PP,Y
+583 ; DD                ADDI #8,Y
+FDE ; DE move:          DIN V               zwei Befehle: Punkt (XA,YA) aus, dann Punkt (X,Y) an
+31E ; DF                ANDI #1,V
+EDE ; E0                BRZ move            warten auf REQ
+FE1 ; E1                DOT FUNC            ACK
+FED ; E2                DOT XA
+FEF ; E3                DOT YA
+FE0 ; E4                DOT Z               Ausgaenge auf 0
+FDE ; E5 cmd:           DIN V               ein Befehl: ACK FUNC mit X, Y
+31E ; E6                ANDI #1,V
+EE5 ; E7                BRZ cmd
+FE1 ; E8                DOT FUNC
+FE2 ; E9                DOT X
+FE3 ; EA                DOT Y               bei Befehlen mit einem Nibble ohne Bedeutung
+FE0 ; EB                DOT Z
+F07 ; EC                RET
