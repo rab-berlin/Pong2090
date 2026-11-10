@@ -1,0 +1,280 @@
+;; pong - Pong fuer Busch Microtronic 2090 mit dem ESP2090 Studio (8x8-LED-Matrix) und 2 Tastern
+;; Version 02: neu geschrieben mit Zeichenbefehlen statt ganzer Bilder (Blockmodus).
+;;  Quelle: pong.src, erzeugt mit dem Mini-Assembler micasm.py (esp2090-firmware/tools)
+;;
+;; Start: Reset, Matrix einschalten (Weboberflaeche: LED on, Emulator2090: m), RUN,
+;;   dann die Spielstufe als Hex-Taste: 1-F gegen den Computer (je hoeher, desto staerker),
+;;   0 = allein gegen die Wand. Alle Register muessen 0 sein (RF = F nach Reset stoert nicht).
+;; Taster 2 (Eingang 2, Pfeil hoch) = Schlaeger hoch, Taster 3 (Eingang 3, Pfeil runter) = runter.
+;;   Beide zugleich: nichts. Eingang 1 gehoert der Matrix (REQ).
+;; Spieler: Spalte 1 (gruen), Computer bzw. Wand: Spalte 8 (gruen), Ball: gelb, Spalte 2-7.
+;; Winkel: Treffer mit der Schlaegermitte = flach (1 Reihe je 2 Spalten), Richtung bleibt;
+;;   mit der oberen oder unteren Kante = steil (1 Reihe je Spalte) weg von der Mitte.
+;;   Oben und unten prallt der Ball ab. Aufschlag aus Spalte 4, Hoehe und Richtung zufaellig.
+;; Computer: zieht nur, solange der Ball auf ihn zufliegt, je Ballschritt mit Wahrscheinlichkeit
+;;   Stufe/16 und nur, wenn der Ball ueber oder unter seinem Schlaeger ist.
+;; Punkt: Ball in Spalte 1 bzw. 8. Anzeige Spieler Computer, weiter mit einer Hex-Taste.
+;;   Bei 9 Punkten bleibt der Endstand stehen. Neues Spiel: Reset, RUN.
+;; Wand (Stufe 0): der erste Fehler beendet das Spiel; Anzeige = Treffer hexadezimal (00-FF).
+;;
+;; Bild: Die Matrix merkt sich das Bild selbst. Das Programm sendet nur Aenderungen als
+;;   Zeichenbefehle (ACK 4 = Punkt): Bewegt sich etwas, wird der alte Punkt ausgeschaltet und der
+;;   neue eingeschaltet (MOVE = zwei Befehle direkt hintereinander). Ball und Schlaeger haben
+;;   verschiedene Farben, ohne dass die Farbe je umgeschaltet wird: Am Anfang wird die Farbmatrix
+;;   einmal gesetzt (alles gruen, Spalte 2-7 gelb); danach schalten die Befehle nur noch Pixel
+;;   an (y+8) und aus (x+8 und y+8), die Farbe kommt aus der Farbmatrix.
+;; Ablauf: Taster, Ball, Taster, Computer - der Spieler kann also zweimal je Ballschritt ziehen.
+;;
+;; Register (untere Bank R0-R7 im Spiel; fuer den Spielstand wird sie mit EXRL gegen M0-M7 getauscht):
+#define Z     r0
+#define FUNC  r1
+#define X     r2
+#define Y     r3
+#define XA    r4
+#define YA    r5
+#define DX    r6
+#define AA    r7
+#define CS    r6
+#define PS    r7
+#define PP    r8
+#define CP    r9
+#define DY    rA
+#define AS    rB
+#define BX    rC
+#define T     rD
+#define V     rE
+#define BY    rF
+;;   Z immer 0 (Ausgaenge auf 0), FUNC = ACK (im Spiel immer 4), X/Y = Punkt an, XA/YA = Punkt aus,
+;;   DX 0 = Ball fliegt nach links, AA Zaehler des Computers; CS/PS Punkte (in M6/M7, nur nach EXRL);
+;;   PP/CP unterste Reihe der Schlaeger 0-5, DY senkrecht je Schritt in halben Reihen (1, 2 auf, F, E ab),
+;;   AS Spielstufe, BX Spalte des Balls 0-7, T Reihe des Balls + 8, V Hilfsregister, BY Hoehe 0-F (Reihe = BY/2).
+
+; ---------------------------------------------------------------- Start
+begin:      KIN AS              ; Spielstufe 0-F (0 = Wand)
+            DISOUT              ; Anzeige aus: 9,3 ms je Befehl (Takt der Matrix)
+            MOVI #E,FUNC        ; Farbmatrix einmal setzen: ACK 14, Farbe 4 = gruen
+            MOVI #4,X
+            CALL cmd
+            MOVI #3,FUNC        ; ACK 3, Art 0: ganze Farbmatrix gruen (nichts leuchtet)
+            MOVI #0,X
+            CALL cmd
+            MOVI #E,FUNC        ; ACK 14, Farbe 3 = gelb
+            MOVI #3,X
+            CALL cmd
+            MOVI #4,FUNC        ; Cursor 1 = (1,0), Art 0 (Y ist hier 0)
+            MOVI #1,X
+            CALL cmd
+            MOVI #6,FUNC        ; Rechteck bis (6,7), Art 0: Spalte 2-7 gelb
+            MOVI #6,X
+            MOVI #7,Y
+            CALL cmd
+
+; ---------------------------------------------------------------- neuer Ball
+newb:       DISOUT              ; nach der Punkteanzeige wieder aus
+            MOVI #2,PP
+            MOVI #2,CP
+            MOVI #3,FUNC        ; ACK 3, Art 3: alle Pixel aus, Farben bleiben
+            MOVI #3,X
+            CALL cmd
+            MOVI #4,FUNC        ; Schlaeger links: Punkt (0,2) an ...
+            MOVI #0,X
+            MOVI #A,Y
+            CALL cmd
+            MOVI #6,FUNC        ; ... Rechteck bis (0,4) an
+            MOVI #C,Y
+            CALL cmd
+            MOVI #4,FUNC        ; rechts: Schlaeger ab (7,2) ...
+            MOVI #7,X
+            MOVI #A,Y
+            CMPI #0,AS
+            BRC nb1
+            MOVI #8,Y           ; ... oder Wand ab (7,0)
+nb1:        CALL cmd
+            MOVI #6,FUNC
+            MOVI #C,Y           ; Schlaeger bis (7,4)
+            CMPI #0,AS
+            BRC nb2
+            MOVI #F,Y           ; Wand bis (7,7)
+nb2:        CALL cmd
+            MOVI #4,FUNC        ; ab jetzt nur noch Punkte
+            RND                 ; Aufschlag: T, V, BY zufaellig
+            SHR V
+            MOVI #1,DY          ; aufwaerts, flach oder steil
+            ADC DY
+            MOV T,DX            ; Richtung zufaellig
+            ANDI #1,DX
+            MOVI #3,BX          ; Spalte 4
+            MOV BY,T            ; Reihe + 8
+            SHR T
+            ADDI #8,T
+            MOV BX,X            ; Ball an
+            MOV T,Y
+            CALL cmd
+
+; ---------------------------------------------------------------- Hauptschleife
+loop:       CALL ply            ; Taster
+            MOV BX,XA           ; Ball: alter Punkt (aus)
+            ADDI #8,XA
+            MOV T,YA
+            CMPI #0,DX
+            BRZ bleft
+            CMPI #6,BX          ; Spalte 7 vor dem Computer?
+            BRZ hitc
+mvr:        CMPI #7,BX          ; war Spalte 8: Punkt fuer den Spieler
+            BRZ ptp
+            ADDI #1,BX
+            GOTO vert
+hitc:       CMPI #0,AS
+            BRZ hitw            ; Wand: immer zurueck, Winkel bleibt
+            MOV T,V
+            SUB CP,V            ; V = Reihe + 8 - Schlaeger
+            CALL hitr
+            BRC mvr             ; verfehlt
+hitw:       MOVI #0,DX
+            GOTO mvl
+bleft:      CMPI #1,BX          ; Spalte 2 vor dem Spieler?
+            BRZ hitp
+mvl:        CMPI #0,BX          ; war Spalte 1: Punkt fuer den Computer
+            BRZ ptc
+            SUBI #1,BX
+vert:       ADD DY,BY           ; senkrecht, Abprall oben und unten
+            BRC vc
+            CMPI #7,DY
+            BRC vb              ; abwaerts unter 0
+vt:         MOV BY,T
+            SHR T
+            ADDI #8,T
+            MOV BX,X            ; neuer Punkt (an)
+            MOV T,Y
+            CALL move
+            CALL ply            ; Taster, zweites Mal
+
+; ---------------------------------------------------------------- Computer
+            CMPI #0,DX
+            BRZ loop            ; Ball fliegt weg
+            ADD AS,AA           ; Stufe, Ueberlauf = Computer darf ziehen
+            BRC aid
+            GOTO loop
+aid:        MOV T,V
+            SUBI #8,V           ; Reihe des Balls
+            CMP V,CP
+            BRC adn             ; Ball unter dem Schlaeger
+            MOV CP,Y
+            ADDI #2,Y
+            CMP Y,V
+            BRC aup             ; Ball ueber dem Schlaeger
+            GOTO loop
+adn:        MOVI #F,XA          ; runter: oberste Reihe aus
+            MOV CP,YA
+            ADDI #A,YA
+            SUBI #1,CP
+            MOVI #7,X           ; neue unterste Reihe an
+            MOV CP,Y
+            ADDI #8,Y
+            GOTO amv
+aup:        MOVI #F,XA          ; hoch: unterste Reihe aus
+            MOV CP,YA
+            ADDI #8,YA
+            ADDI #1,CP
+            MOVI #7,X           ; neue oberste Reihe an
+            MOV CP,Y
+            ADDI #A,Y
+amv:        CALL move
+            GOTO loop
+
+; ---------------------------------------------------------------- Teile
+vc:         CMPI #7,DY
+            BRC vt              ; abwaerts, normal
+vb:         INV BY              ; Abprall: Hoehe spiegeln, Richtung umdrehen
+            INV DY
+            ADDI #1,DY
+            GOTO vt
+
+hitp:       MOV T,V
+            SUB PP,V
+            CALL hitr
+            BRC mvl             ; verfehlt
+            MOVI #1,DX
+            CMPI #0,AS
+            BRC mvr
+            EXRL                ; Wand: Treffer zaehlen (PS CS hexadezimal, in M6/M7)
+            ADDI #1,CS
+            ADC PS
+            EXRL
+            GOTO mvr
+
+hitr:       SUBI #8,V           ; V = Reihe - Schlaeger: 0 unten, 1 Mitte, 2 oben
+            CMPI #2,V
+            BRC hret            ; sonst (auch negativ = B-F) verfehlt, Carry 1
+            SUBI #1,V
+            ADD V,V
+            BRZ hmid
+            MOV V,DY            ; Kante: steil weg von der Mitte (E bzw. 2)
+            RSC
+            RET
+hmid:       CMPI #7,DY          ; Mitte: flach, Richtung bleibt (1 bzw. F)
+            MOVI #0,DY
+            SUBC DY
+            ADD DY,DY
+            ADDI #1,DY
+hret:       RET
+
+ptc:        CMPI #0,AS
+            EXRL                ; Spielstand nach R6/R7 (Flags bleiben)
+            BRZ pnt             ; Wand: Spielende
+            ADDI #1,CS
+            CMPI #9,CS
+            GOTO pnt
+ptp:        EXRL
+            ADDI #1,PS
+            CMPI #9,PS
+pnt:        DISP #2,CS          ; Spielstand Spieler Computer
+end:        BRZ end             ; 9 erreicht: bleibt stehen
+            KIN V
+            EXRL                ; Spielregister zurueck
+            GOTO newb
+
+; ---------------------------------------------------------------- Taster (Unterprogramm)
+ply:        DIN V               ; Taster 2 = hoch (2), Taster 3 = runter (4); Eingang 1 ist REQ
+            ANDI #6,V
+            CMPI #2,V
+            BRZ pup
+            CMPI #4,V
+            BRZ pdn             ; keiner oder beide: nichts
+pret:       RET
+pup:        CMPI #5,PP
+            BRZ pret
+            MOVI #8,XA          ; hoch: unterste Reihe aus
+            MOV PP,YA
+            ADDI #8,YA
+            ADDI #1,PP
+            MOVI #0,X           ; neue oberste Reihe an
+            MOV PP,Y
+            ADDI #A,Y
+            GOTO move           ; das RET von move kehrt zum Aufrufer von ply zurueck
+pdn:        CMPI #0,PP
+            BRZ pret
+            MOVI #8,XA          ; runter: oberste Reihe aus
+            MOV PP,YA
+            ADDI #A,YA
+            SUBI #1,PP
+            MOVI #0,X           ; neue unterste Reihe an
+            MOV PP,Y
+            ADDI #8,Y
+
+; ---------------------------------------------------------------- Befehle an die Matrix
+move:       DIN V               ; zwei Befehle: Punkt (XA,YA) aus, dann Punkt (X,Y) an
+            ANDI #1,V
+            BRZ move            ; warten auf REQ
+            DOT FUNC            ; ACK
+            DOT XA
+            DOT YA
+            DOT Z               ; Ausgaenge auf 0
+cmd:        DIN V               ; ein Befehl: ACK FUNC mit X, Y
+            ANDI #1,V
+            BRZ cmd
+            DOT FUNC
+            DOT X
+            DOT Y               ; bei Befehlen mit einem Nibble ohne Bedeutung
+            DOT Z
+            RET
