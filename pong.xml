@@ -1,0 +1,111 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<pong_project name="Pong" machine="Busch Microtronic 2090" version="02" language="de" program_file="pong.mic (Quelle pong.src)" instruction_set_xml="microtronic.xml (Emulator2090/docs)" emulator="microtronic.py (Emulator2090)">
+  <purpose>Pong für den Busch Microtronic 2090 mit dem ESP2090 Studio (8x8-LED-Matrix) und 2 Tastern (hoch/runter): Spieler links gegen den Computer rechts in 15 Spielstufen oder allein gegen die Wand. Version 02 ist neu geschrieben: Zeichenbefehle (ACK 4 Punkt) statt ganzer Bilder im Blockmodus; die Matrix hält das Bild, das Programm sendet nur Änderungen. Ball gelb, Schläger und Wand grün. Programm 213 Schritte (00-D4), frei: 43. Dieses Dokument ist die Arbeitsgrundlage für weitere Chats; Befehlssatz, Matrixprotokoll und Emulator stehen in microtronic.xml (Repo Emulator2090), das Protokoll des ESP2090 Studios in ESP2090/docs/LED-Matrix.md.</purpose>
+  <package>
+    <file name="pong.src">Quelle mit Sprungmarken und #define (Mini-Assembler micasm.py aus esp2090-firmware/tools)</file>
+    <file name="pong.mic">erzeugtes Programm im Emulator-Format, 213 Befehle, Marken und Kommentare nach ;</file>
+    <file name="pong.xml">dieses Dokument: Regeln, Steuerung, Architektur, Zeitverhalten, Tests, offene Punkte</file>
+    <file name="README.md">Beschreibung für Leser, mit Abschnitt zur Implementierung</file>
+  </package>
+  <workflow>
+    <step>Start: Reset, Matrix einschalten (Weboberfläche LED on; Emulator2090 Taste m, Modus ESP), HALT NEXT 00 RUN, dann die Spielstufe als Hex-Taste. Die Matrix ist dauernd aktiv (kein Schlafen/Wecken): Die Taster liegen an Eingang 2 und 3, Eingang 1 ist REQ.</step>
+    <step>Startzustand nach Einschalten/Reset: alle Register R und M 0, RF = F. R0 (Z) muss 0 sein und wird nie beschrieben; M6/M7 (Spielstand) müssen 0 sein; RF (BY) wird beim Aufschlag gesetzt. Kein CLEAR am Programmanfang.</step>
+    <step>Ändern: pong.src bearbeiten, dann python tools/micasm.py pong.src pong.mic (Repo esp2090-firmware). Der Assembler vergibt die Adressen neu.</step>
+    <step>Test ohne Gerät (siehe tests): Emulator2090 (CPU, Zeitmodell, ESP-Matrix mit REQ/ACK und Zeichenbefehlen) plus unabhängiges Python-Regelmodell; Vergleich an jedem Ballschritt.</step>
+  </workflow>
+  <game_rules status="implemented" note="Regeln wie Version 01">
+    <field>Spielfeld 8x8. Spieler-Schläger Spalte 1 (x = 0), Computer-Schläger Spalte 8 (x = 7), je 3 Reihen hoch, Start Reihe 3-5 (unterste Reihe 2). Ball ein Punkt, im Spiel in Spalte 2-7.</field>
+    <ball>Je Ballschritt eine Spalte waagerecht. Senkrecht in halben Reihen: flach 1 halbe Reihe (eine Reihe je 2 Spalten), steil 2 halbe Reihen (eine Reihe je Spalte). Höhe BY 0-F, Reihe = BY/2. Oben und unten elastischer Abprall (BY spiegeln mit INV, DY umkehren).</ball>
+    <angles>Treffer mit der unteren Schlägerkante: steil abwärts; obere Kante: steil aufwärts; Mitte: flach, die senkrechte Richtung bleibt. Getestet wird, wenn der Ball in Spalte 2 (x = 1) bzw. 7 (x = 6) steht und auf den Schläger zufliegt, mit seiner aktuellen Reihe und der Schlägerlage nach der ersten Tasterabfrage des Schritts.</angles>
+    <serve>Aus Spalte 4 (x = 3), Höhe 0-F zufällig (RND-Ziffer F direkt in BY), aufwärts flach oder steil zufällig (Bit aus RND-Ziffer E), Richtung links/rechts zufällig (Bit 1 der RND-Ziffer D).</serve>
+    <point>Verfehlt der Schläger, fliegt der Ball in Spalte 1 (bzw. 8) und ist dort bis zum nächsten Ballschritt zu sehen; dann zählt der Punkt. Anzeige Spieler Computer (DISP 2,6 nach EXRL) bis zu einer Hex-Taste, dann Neuaufbau (alle Pixel aus, Schläger in die Mitte) und Aufschlag.</point>
+    <end>Wer 9 Punkte hat, gewinnt: der Endstand bleibt stehen (BRZ auf sich selbst). Neues Spiel: Reset, RUN.</end>
+    <wall>Stufe 0: Spalte 8 ist eine Wand über alle 8 Reihen, der Ball prallt dort mit gleichem Winkel ab, kein Computer-Schläger. Jeder Treffer des Spielers zählt (PS CS als zweistellige Hexzahl, 00-FF). Der erste Fehler beendet das Spiel mit der Trefferzahl in der Anzeige.</wall>
+  </game_rules>
+  <computer status="implemented">
+    <rule>Der Computer zieht nur, solange der Ball auf ihn zufliegt (DX nicht 0), und dann je Ballschritt nur bei Überlauf von AA + AS (Anteil Stufe/16, gleichmäßig verteilt; Prinzip Fehlerakkumulation wie bei Bresenham/DDA). Stufe 0 läuft nie über.</rule>
+    <rule>Er zieht eine Reihe zum Ball, wenn der Ball unter (Reihe kleiner CP) oder über (Reihe größer CP+2) seinem Schläger ist. Dadurch braucht er keine Randprüfung.</rule>
+    <balance>Gegenüber Version 01 kann der Spieler zweimal je Ballschritt ziehen (zwei Tasterabfragen), der Computer weiterhin höchstens einmal. Das Spiel ist für den Spieler leichter. Emulator, simulierter Spieler (zieht mit Wahrscheinlichkeit k zum Ball, sonst zufällig), Spiel bis 9: k = 1,0 gewinnt Stufe 3 9:0, Stufe 8 9:2 bis 9:4 oder offen, Stufe 12 9:1 oder offen, Stufe 15 offen (kein Ende in 400000 Befehlen); k = 0,7: Stufe 3 gemischt (9:1, 7:9, 8:9), Stufe 8 gewonnen (9:3 bis 9:6), Stufe 12 und 15 verloren; k = 0,3 verliert meist.</balance>
+  </computer>
+  <controls status="implemented">
+    <key input="2">hoch (Emulator: Pfeil hoch)</key>
+    <key input="3">runter (Pfeil runter)</key>
+    <rule>DIN zweimal je Ballschritt (vor dem Ball und nach dem Ball). Nur 2 allein = hoch, nur 4 allein = runter (ANDI 6), beide = nichts; Eingang 1 (REQ der Matrix) und Eingang 4 werden ausgeblendet. Am Rand bleibt der Schläger stehen.</rule>
+    <keys>Erste Hex-Taste nach RUN: Spielstufe. Nach jedem Punkt: beliebige Hex-Taste = Aufschlag (die Wartezeit macht den Aufschlag zufällig).</keys>
+  </controls>
+  <display status="implemented">
+    <item key="principle">Kein Bildspeicher im 2090. Die Matrix (ESP) hält Bit- und Farbmatrix; das Programm sendet Zeichenbefehle. Im Spiel nur ACK 4 (Punkt) mit Zeichenart in den +8-Bits: an = (x, y+8) = Art 2 (Bit an, Farbe bleibt), aus = (x+8, y+8) = Art 3 (Bit aus, Farbe bleibt).</item>
+    <item key="colors">Einmal nach der Stufenwahl: ACK 14 Farbe 4 (grün); ACK 3 Art 0 (ganze Farbmatrix grün, nichts leuchtet); ACK 14 Farbe 3 (gelb); ACK 4 (1,0) Art 0 (Cursor 1); ACK 6 (6,7) Art 0 (Rechteck Spalte 2-7 gelb). Danach wird die Farbe nie mehr gewechselt: Ball in Spalte 2-7 gelb, Schläger/Wand in Spalte 1 und 8 grün. Ein verfehlter Ball in Spalte 1/8 erscheint grün.</item>
+    <item key="newb">Je Ball: ACK 3 Art 3 (alle Pixel aus, Farben bleiben); Schläger links ACK 4 (0,2+8), ACK 6 (0,4+8); rechts ACK 4 (7,2+8), ACK 6 (7,4+8) bzw. bei Stufe 0 die Wand (7,0+8) bis (7,7+8); Ball ACK 4 (BX, T).</item>
+    <item key="move">Bewegung um ein Feld = zwei Befehle direkt hintereinander: Routine move sendet ACK 4 (XA,YA) (alter Punkt aus) und fällt in cmd für ACK 4 (X,Y) (neuer Punkt an). Schläger hoch: unterste Reihe aus, neue oberste an; runter: oberste aus, neue unterste an.</item>
+    <item key="cmd">cmd: DIN V; ANDI 1,V; BRZ cmd; DOT FUNC; DOT X; DOT Y; DOT Z; RET. Z (R0) ist immer 0 und spart das MOVI 0. FUNC ist im Spiel immer 4; nur beim Aufbau 14, 3, 6. Bei Befehlen mit einem Nibble (ACK 14, ACK 3) ist das zweite DOT ohne Bedeutung; die 0 danach trennt es vom nächsten ACK.</item>
+  </display>
+  <architecture>
+    <registers note="untere Bank R0-R7 = Spielregister; nur für den Spielstand mit EXRL gegen M0-M7 getauscht">
+      <reg n="0">Z immer 0 (DOT Z = Ausgänge auf 0)</reg>
+      <reg n="1">FUNC ACK-Nummer (im Spiel 4)</reg>
+      <reg n="2">X Punkt an: x</reg>
+      <reg n="3">Y Punkt an: y + 8; in aid kurz Hilfsregister (CP + 2)</reg>
+      <reg n="4">XA Punkt aus: x + 8</reg>
+      <reg n="5">YA Punkt aus: y + 8</reg>
+      <reg n="6">DX 0 = Ball fliegt nach links, sonst rechts; nach EXRL: CS Punkte Computer bzw. Wand-Treffer niedrige Stelle (M6)</reg>
+      <reg n="7">AA Zähler des Computers; nach EXRL: PS Punkte Spieler bzw. Wand-Treffer hohe Stelle (M7)</reg>
+      <reg n="8">PP Spieler-Schläger, unterste Reihe 0-5</reg>
+      <reg n="9">CP Computer-Schläger, unterste Reihe 0-5</reg>
+      <reg n="A">DY senkrecht je Schritt in halben Reihen: 1, 2 aufwärts, F, E abwärts</reg>
+      <reg n="B">AS Spielstufe 0-F</reg>
+      <reg n="C">BX Spalte des Balls 0-7</reg>
+      <reg n="D">T Reihe des Balls + 8 (fertiges y-Nibble); RND-Ziffer D</reg>
+      <reg n="E">V Hilfsregister: REQ-Warten, Taster, Treffer-Abstand, Taste; RND-Ziffer E</reg>
+      <reg n="F">BY Höhe des Balls 0-F in halben Reihen; RND-Ziffer F</reg>
+    </registers>
+    <loop>loop: CALL ply (Taster); Ball: alten Punkt merken (XA = BX + 8, YA = T), waagerecht (rechts: x = 6 Treffertest Computer/Wand, x = 7 Punkt Spieler; links: x = 1 Treffertest Spieler, x = 0 Punkt Computer), senkrecht mit Abprall, T = BY/2 + 8, X = BX, Y = T, CALL move; CALL ply (zweites Mal); Computer (aid, ggf. CALL move); GOTO loop.</loop>
+    <routine name="ply">Unterprogramm. DIN V; ANDI 6; 2 = hoch (pup), 4 = runter (pdn), sonst RET. pup/pdn setzen XA, YA, PP, X, Y und springen mit GOTO nach move bzw. fallen hinein; das RET von move kehrt zum Aufrufer von ply zurück (tail_goto, weil nur eine Rücksprungadresse existiert).</routine>
+    <routine name="hitr">Eingang V = T - Schläger (also Reihe + 8 - Schläger). SUBI 8,V; CMPI 2,V; BRC = verfehlt (Carry 1, auch negative Werte B-F). Sonst SUBI 1; ADD V,V: E (unten, steil abwärts), 0 (Mitte), 2 (oben, steil aufwärts). Mitte: CMPI 7,DY; MOVI 0,DY; SUBC DY; ADD DY,DY; ADDI 1,DY ergibt 1 oder F, ohne Sprung. Rückkehr mit Carry 0.</routine>
+    <routine name="Punkte">ptc: CMPI 0,AS; EXRL (Flags bleiben); BRZ pnt (Wand: Ende); ADDI 1,CS; CMPI 9,CS; GOTO pnt. ptp: EXRL; ADDI 1,PS; CMPI 9,PS. pnt: DISP 2,CS; end: BRZ end; KIN V; EXRL; GOTO newb. Wand-Treffer in hitp: EXRL; ADDI 1,CS; ADC PS; EXRL.</routine>
+    <sections>
+      <section label="begin" address="00">Stufe (KIN), DISOUT, Farbmatrix (5 Befehle)</section>
+      <section label="newb" address="12">Neuaufbau, Schläger/Wand, Aufschlag</section>
+      <section label="loop" address="3A">Taster, Ball, Taster</section>
+      <section label="Computer" address="5E">AA + AS, aid (63), adn, aup, amv</section>
+      <section label="vc, vb" address="7D">Abprall</section>
+      <section label="hitp" address="83">Treffertest Spieler, Wand-Treffer zählen</section>
+      <section label="hitr" address="8F">Treffer-Unterprogramm</section>
+      <section label="ptc, ptp, pnt" address="9E">Punkte, Anzeige, Spielende</section>
+      <section label="ply" address="AC">Taster-Unterprogramm mit pup, pdn</section>
+      <section label="move, cmd" address="C6, CD">Befehle an die Matrix</section>
+    </sections>
+  </architecture>
+  <timing status="simulated" note="Emulator2090 mit 9,3 ms je Befehl (DISOUT) und dem ESP-Modell (nach einem Befehl 10 ms, dann REQ); am Gerät gemessen sind Befehle etwa 4 Prozent schneller, der ESP fragt aber eher später wieder">
+    <item>Ballschritt: Median 0,66 s, 10 Prozent unter 0,49 s, 10 Prozent über 1,04 s, längster 1,48 s (56674 Schritte). Version 01: Median 0,94 s.</item>
+    <item>Anteile: Spiellogik etwa 0,4 s (rund 45 Befehle mit beiden Tasterabfragen und dem Computer), das Befehlspaar für den Ball samt Warten auf REQ etwa 0,17-0,25 s; jeder Schlägerzug ein weiteres Paar.</item>
+    <item>Paar-Timing: Nach dem ersten Befehl liest der ESP das zweite Nibble 23,4 ms nach dem ACK, zeigt an und setzt etwa 10 ms später wieder REQ. Das Programm ist 37 ms nach dem ACK am DIN; liegt REQ dann noch nicht an, kostet es eine Runde der Warteschleife (28 ms). Das zweite ACK kommt dann etwa 65 bzw. 93 ms nach dem ersten.</item>
+    <item>Tasterabfrage etwa alle 0,3 s (zweimal je Ballschritt).</item>
+  </timing>
+  <tests status="simulated">
+    <test>45 Spiele im Emulator2090 (Stufe 0, 3, 8, 12, 15; simulierter Spieler mit Können 1,0 / 0,7 / 0,3 und gelegentlich beiden Tastern), bis 400000 Befehle je Spiel: an jedem Ballschritt Ballzustand (Spalte, Höhe, Richtungen) gleich einem unabhängig geschriebenen Python-Regelmodell, Punkte im selben Schritt, Wand-Treffer gleich der Anzeige; an jedem Schleifenanfang Bild der Matrix = Schläger + Wand/Schläger + Ball (solange der Ball in Spalte 2-7 ist), Ball gelb, Schläger grün. 56674 Ballschritte, keine Abweichung.</test>
+    <test>pong.mic lädt im Emulator mit 213 Befehlen.</test>
+  </tests>
+  <changes>
+    <change version="01">Grundversion mit Blockmodus (ganzes Bild je Takt), Bild in M0-MF nach Hälften sortiert, Fenster, PAD/CLROP. 256 Schritte. Altes Matrixprotokoll (Startnibble 1, Endnibble 0).</change>
+    <change version="02">Neu geschrieben für das ESP2090 Studio: Zeichenbefehle statt Bilder, kein Bildspeicher, Farben über die Farbmatrix, zwei Tasterabfragen je Ballschritt, Spielstand in M6/M7 (EXRL), Quelle als .src mit Marken. 213 Schritte.</change>
+  </changes>
+  <idioms note="Neu in diesem Programm, Kandidaten für microtronic.xml">
+    <idiom key="draw_instead_of_frame">Bei wenigen bewegten Punkten nur Änderungen senden: alter Punkt aus (ACK 4, x+8, y+8), neuer Punkt an (ACK 4, x, y+8). Der 2090 braucht dann keinen Bildspeicher; alle 16 M-Register und die Fensterlogik entfallen.</idiom>
+    <idiom key="color_plane_once">Farben einmal in der Farbmatrix anlegen (ACK 14, ACK 3 Art 0, Rechteck Art 0) und im Spiel nur Zeichenart 2 und 3 benutzen. Verschiedenfarbige Objekte kosten dann keinen Farbwechsel-Befehl, solange jede Farbe ihr eigenes Gebiet hat.</idiom>
+    <idiom key="command_pair">Zwei Befehle als eine Routine: move sendet den ersten und fällt in cmd. Kein RET/CALL dazwischen; das zweite ACK trifft die nächste oder übernächste REQ-Phase.</idiom>
+    <idiom key="zero_register">Ein nie beschriebenes Register (R0 = 0 nach Reset) als Quelle für DOT 0.</idiom>
+    <idiom key="y_plus_8_stored">Koordinate gleich als fertiges Nibble speichern (T = Reihe + 8): spart das Addieren vor jedem Befehl; für Rechnungen SUBI 8.</idiom>
+    <idiom key="half_step_error_bit">Schräge Bahn mit halben Schritten: Position in halben Einheiten zählen, anzeigen mit SHR. Das unterste Bit ist der Rest (Fehlerterm wie bei Bresenham); flach = +1, steil = +2 je Spalte.</idiom>
+    <idiom key="overflow_rate">Ereignis mit Anteil n/16 gleichmäßig verteilen: ADD n,akk; BRC Ereignis (Fehlerakkumulation statt Würfel).</idiom>
+    <idiom key="score_in_memory_bank">Selten gebrauchte Werte (Spielstand) in M0-M7 halten und nur zum Zählen/Anzeigen mit EXRL einblenden; EXRL lässt die Flags stehen.</idiom>
+  </idioms>
+  <open_points>
+    <point>Nicht auf dem Gerät getestet, nur im Emulator2090.</point>
+    <point>Tempo am Gerät hängt davon ab, wie schnell der ESP nach einem Befehl wieder REQ setzt (Anzeige neu aufbauen, Weboberfläche). Fällt das erste DIN des zweiten Befehls regelmäßig knapp vor das REQ, könnte ein NOP vor move/cmd die Warterunde sparen; erst am Gerät messen.</point>
+    <point>Balance: Durch zwei Tasterabfragen je Ballschritt ist der Spieler im Vorteil. Stellschrauben: zweite Abfrage streichen (ein CALL), oder den Computer ebenfalls zweimal ziehen lassen.</point>
+    <point>43 Schritte frei, z. B. für Tempostufen, einen Aufschlag in Richtung des Verlierers oder einen Neustart ohne Reset.</point>
+    <point>Verfehlt der Schläger und zieht er danach in die Reihe des Balls, kann der Ball in Spalte 1/8 verschwinden (der Schlägerzug schaltet das Pixel aus); der Punkt zählt trotzdem.</point>
+    <point>Wand-Treffer werden hexadezimal angezeigt (00-FF).</point>
+  </open_points>
+</pong_project>
