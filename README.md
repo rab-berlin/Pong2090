@@ -41,10 +41,27 @@ Quelle: Benj Edwards, „The Making of Pong“, Vintage Computing and Gaming (20
 
 ## Technik: Zeichenbefehle statt ganzer Bilder
 
+**Schreibweise in diesem README:** Ein Register heißt `R0` bis `RF` (Speicher: `M0` bis `MF`), ein Wert beginnt mit `#`, zum Beispiel `#3` oder `#F`. `RF` ist also ein Register, `#F` die Zahl fünfzehn. Die Programmzeilen benutzen wie `pong.mic` Namen für die Register (`BY` für `R5` usw.), Werte stehen mit `#`.
+
+| Name | Register | Bedeutung |
+|---|---|---|
+| `Z` | `R0` | immer `#0` (Ausgänge auf 0) |
+| `FUNC` | `R1` | ACK-Nummer (im Spiel immer `#4`) |
+| `X`, `Y` | `R2`, `R3` | Punkt, der angeschaltet wird |
+| `T` | `R4` | Reihe des Balls + `#8` |
+| `BY` | `R5` | Höhe des Balls `#0`-`#F` (Reihe = `BY` / 2) |
+| `DX` | `R6` | `#0` = Ball fliegt nach links, `#1` nach rechts |
+| `CS`, `PS` | in `M6`, `M7` | Punkte Computer, Spieler (nur nach `EXRL` in `R6`, `R7`) |
+| `PP`, `CP` | `R8`, `R9` | unterste Reihe der Schläger (`#0`-`#5`) |
+| `DY` | `RA` | senkrecht je Schritt in halben Reihen: `#1`, `#2` auf, `#F`, `#E` ab |
+| `AS` | `RB` | Spielstufe |
+| `BX` | `RC` | Spalte des Balls (`#0`-`#7`) |
+| `XA`, `V`, `YA` | `RD`, `RE`, `RF` | Punkt, der ausgeschaltet wird, Hilfsregister; `RND` legt hier seine Zufallsziffern ab |
+
 Das Programm schickt nicht nach jedem Schritt das ganze Bild (16 Register), sondern sendet nur, was sich ändert:
 
 - **Die Matrix merkt sich das Bild.** Das Programm braucht keinen Bildspeicher mehr, nur noch die Lage von Ball und Schlägern.
-- **Bewegung = zwei Punkte.** Bewegt sich der Ball oder ein Schläger um ein Feld, schaltet das Programm den alten Punkt aus und den neuen an (ACK 4, zwei Befehle direkt hintereinander).
+- **Bewegung = zwei Punkte.** Bewegt sich der Ball oder ein Schläger um ein Feld, schaltet das Programm den alten Punkt aus und den neuen an (ACK `#4`, zwei Befehle direkt hintereinander).
 - **Farben ohne Umschalten.** Am Anfang setzt das Programm einmal die Farbmatrix: alles grün, Spalte 2-7 gelb. Danach schalten die Befehle nur noch Pixel an und aus, die Farbe kommt aus der Farbmatrix. Der Ball ist deshalb gelb und die Schläger grün, ohne dass die Farbe im Spiel je gewechselt wird.
 - **Matrix dauernd aktiv.** Die Taster liegen an Eingang 2 und 3, Eingang 1 bleibt für die Anfrage der Matrix (REQ). Schlafen und Wecken braucht das Programm nicht.
 
@@ -52,50 +69,132 @@ Im Emulator dauert ein Ballschritt im Mittel 0,82 s, und die Taster werden etwa 
 
 ## Wie es gemacht ist
 
-Der 2090 rechnet nur mit ganzen Zahlen von 0 bis 15, kennt keine indirekte Adressierung und merkt sich nur eine Rücksprungadresse. Ein paar Kniffe, mit denen Pong trotzdem in 237 Schritte passt:
+Der 2090 rechnet nur mit ganzen Zahlen von 0 bis 15, kennt keine indirekte Adressierung und merkt sich nur eine Rücksprungadresse. Ein paar Kniffe, mit denen Pong trotzdem in 237 Schritte passt. Schreibweise wie oben: `RF` ist ein Register, `#F` ein Wert.
 
 ### Schräge Bahnen ohne Brüche: die Idee von Bresenham
 
 Der Ball fliegt je Schritt genau eine Spalte weiter. Für die steile Bahn steigt er dabei eine ganze Reihe, für die flache nur eine halbe. Halbe Reihen kann die Matrix nicht zeigen, und Brüche kennt der 2090 nicht.
 
-Die Lösung ist dieselbe Idee, mit der Bresenhams Algorithmus schräge Linien auf ein Raster bringt: Man zählt den Rest mit, statt ihn wegzuwerfen. Die Höhe des Balls steht in halben Reihen in einem Register (BY, 0 bis 15). Je Schritt kommt 1 (flach) oder 2 (steil) dazu, abwärts F oder E, das ist -1 und -2. Angezeigt wird die Reihe BY / 2, also ein `SHR`. Das unterste Bit ist der Rest, der „Fehler“ in Bresenhams Sprache: Bei der flachen Bahn kippt es bei jedem Schritt, und jedes zweite Mal rückt der Ball dadurch eine Reihe weiter. So entsteht die Treppe 1 Reihe je 2 Spalten, ganz ohne Vergleich oder Sonderfall.
+Die Lösung ist dieselbe Idee, mit der Bresenhams Algorithmus schräge Linien auf ein Raster bringt: Man zählt den Rest mit, statt ihn wegzuwerfen. Die Höhe des Balls steht in halben Reihen in einem Register (`BY`, `#0` bis `#F`). Je Schritt kommt `#1` (flach) oder `#2` (steil) dazu, abwärts `#F` oder `#E`, das ist −1 und −2. Angezeigt wird die Reihe `BY` / 2, also ein `SHR`. Das unterste Bit ist der Rest, der „Fehler“ in Bresenhams Sprache: Bei der flachen Bahn kippt es bei jedem Schritt, und jedes zweite Mal rückt der Ball dadurch eine Reihe weiter. So entsteht die Treppe 1 Reihe je 2 Spalten, ganz ohne Vergleich oder Sonderfall.
+
+```
+vert: ADD  DY,BY      ; BY = BY + DY   (halbe Reihen)
+      BRC  vc         ; Carry: über #F hinaus
+      CMPI #7,DY
+      BRC  vb         ; abwärts (DY = #F oder #E) und unter #0: Abprall
+vt:   MOV  BY,T       ; T = BY
+      SHR  T          ; T = BY / 2 = Reihe (das Bit, das herausfällt, ist der Rest)
+      ADDI #8,T       ; + #8: das heißt im Zeichenbefehl „Pixel an“
+```
 
 Das ist Bresenham in seiner einfachsten Form, mit nur zwei möglichen Steigungen. Den vollständigen Algorithmus für beliebige Linien hat übrigens die Matrix selbst eingebaut (Zeichenbefehl ACK 8), Pong braucht ihn aber nicht.
 
-Der Abprall oben und unten nutzt den Überlauf: Läuft BY beim Addieren über 15 oder unter 0, zeigt das der Carry. Dann wird die Höhe gespiegelt (`INV`) und die Richtung umgedreht.
+Der Abprall oben und unten nutzt den Überlauf: Läuft `BY` beim Addieren über `#F` oder unter `#0`, zeigt das der Carry. Dann wird die Höhe gespiegelt (`INV`) und die Richtung umgedreht.
+
+```
+vb: INV  BY           ; BY = #F - BY: Höhe spiegeln
+    INV  DY           ; DY = #F - DY ...
+    ADDI #1,DY        ; ... + #1 = 0 - DY: Richtung umdrehen
+    GOTO vt
+```
 
 ### Ein Gegner, der Fehler macht
 
 Ein Computergegner, der immer richtig zieht, ist langweilig, und einer, der nur selten ziehen darf, ist kein Gegner. Der Computer spielt deshalb wie ein Mensch: Er will bei jedem Ballschritt das Richtige tun, ist aber nicht immer bei der Sache.
 
 - **Was er will:** Fliegt der Ball auf ihn zu, zieht er eine Reihe zum Ball, sobald der über oder unter seinem Schläger ist. Fliegt der Ball weg, schaut er auf den Gegner: In einem von vier Schritten geht er dem Schläger des Spielers nach. So steht er nie starr herum.
-- **Wie konzentriert er ist:** Bei jedem Schritt würfelt das Programm (`RND`). Die Spielstufe bestimmt, wie oft er unkonzentriert ist: bei Stufe 1 in knapp der Hälfte der Schritte, bei Stufe 8 in einem Viertel, bei Stufe F fast nie.
+- **Wie konzentriert er ist:** Bei jedem Schritt würfelt das Programm (`RND`). Die Spielstufe bestimmt, wie oft er unkonzentriert ist: bei Stufe `#1` in knapp der Hälfte der Schritte, bei Stufe `#8` in einem Viertel, bei Stufe `#F` fast nie.
 - **Was dann passiert:** Unkonzentriert zögert er in der Hälfte der Fälle, also kein Zug. In einem Viertel zieht er in die falsche Richtung, und in einem Viertel macht er es trotzdem richtig.
 
-Auch auf Stufe 1 trifft er damit die meisten Bälle, verliert aber gegen einen aufmerksamen Spieler. Auf Stufe F macht er kaum Fehler.
+Auch auf Stufe `#1` trifft er damit die meisten Bälle, verliert aber gegen einen aufmerksamen Spieler. Auf Stufe `#F` macht er kaum Fehler.
 
-Der Würfel `RND` legt seine drei Ziffern immer in den Registern D, E und F ab. Dort stehen im Programm deshalb nur Hilfswerte, die gerade nicht gebraucht werden. Der Zustand des Spiels liegt in anderen Registern.
+```
+ai1: CMP  XA,AS       ; Carry, wenn Würfel XA < Stufe AS: konzentriert
+     BRC  ai3         ; ja: richtig ziehen
+     SHR  V           ; sonst: in der Hälfte der Fälle trotzdem
+     BRC  ai3
+     ANDI #3,YA       ; unkonzentriert: YA = #0 falsche Richtung,
+     BRZ  ai5
+     CMPI #3,YA       ; #3 doch richtig,
+     BRZ  ai3
+     GOTO loop        ; #1 und #2: zögern, kein Zug
+```
+
+Der Würfel `RND` legt seine drei Ziffern immer in den Registern `RD`, `RE` und `RF` ab (`XA`, `V`, `YA`). Dort stehen im Programm deshalb nur Hilfswerte, die gerade nicht gebraucht werden. Der Zustand des Spiels liegt in anderen Registern.
 
 ### Der Treffer: drei Fälle aus einer Subtraktion
 
-Trifft der Ball die Schlägerspalte, rechnet das Programm V = Reihe des Balls minus unterste Reihe des Schlägers. V ist 0, 1 oder 2 für unten, Mitte, oben. Alles andere ist daneben, auch negative Werte, denn die erscheinen im 4-Bit-Register als 11 bis 15. Ein einziger Vergleich (`CMPI 2`) trennt also Treffer und Fehler.
+Trifft der Ball die Schlägerspalte, rechnet das Programm `V` = Reihe des Balls minus unterste Reihe des Schlägers. `V` ist `#0`, `#1` oder `#2` für unten, Mitte, oben. Alles andere ist daneben, auch negative Werte, denn die erscheinen im 4-Bit-Register als `#B` bis `#F`. Ein einziger Vergleich (`CMPI #2`) trennt also Treffer und Fehler.
 
-Aus V wird dann die neue Richtung: (V - 1) * 2 ergibt -2, 0 oder 2, also steil abwärts, Mitte, steil aufwärts. Bei der Mitte bleibt die bisherige senkrechte Richtung, nur flach. Das Vorzeichen holt sich das Programm ohne Sprung aus dem Carry eines Vergleichs.
+Aus `V` wird dann die neue Richtung: (`V` − 1) · 2 ergibt −2, 0 oder 2, also steil abwärts, Mitte, steil aufwärts. Bei der Mitte bleibt die bisherige senkrechte Richtung, nur flach. Das Vorzeichen holt sich das Programm ohne Sprung aus dem Carry eines Vergleichs.
+
+```
+hitp: MOV  T,V        ; V = Reihe + #8
+      SUB  PP,V       ; V = Reihe + #8 - unterste Schlägerreihe
+      CALL hitr
+hitr: SUBI #8,V       ; V = Reihe - Schläger: #0 unten, #1 Mitte, #2 oben
+      CMPI #2,V       ; Carry, wenn V > #2: verfehlt (auch #B-#F)
+      BRC  hret       ; Carry bleibt gesetzt: verfehlt
+      SUBI #1,V       ; V = V - 1:  #F (-1), #0, #1
+      ADD  V,V        ; V = 2 * V:  #E (-2), #0, #2
+      BRZ  hmid       ; #0: Mitte
+      MOV  V,DY       ; Kante: steil, #E oder #2, weg von der Mitte
+      RSC             ; Carry zurücksetzen: Treffer
+      RET
+```
 
 ### Zwei Befehle direkt hintereinander
 
 Ein Zeichenbefehl an die Matrix ist: auf REQ warten, ACK, zwei Nibbles, Ausgänge auf 0. Für eine Bewegung braucht es zwei davon. Die Routine `move` sendet den ersten (alter Punkt aus) und läuft dann einfach in die Routine `cmd` für den zweiten (neuer Punkt an) hinein. So gibt es den Code nur einmal, und zwischen den beiden Befehlen vergeht keine Zeit für Rücksprung und neuen Aufruf.
 
-Ob ein Punkt an- oder ausgeschaltet wird, steckt in den Koordinaten selbst: y + 8 heißt „Pixel an“, x + 8 und y + 8 heißt „Pixel aus“. Die Farbe bleibt in beiden Fällen, wie sie in der Farbmatrix steht.
+```
+move: DIN  V          ; warten auf REQ (Eingang 1) ...
+      ANDI #1,V
+      BRZ  move
+      DOT  FUNC       ; ACK
+      DOT  XA         ; erstes Nibble:  x + #8 des alten Punkts
+      DOT  YA         ; zweites Nibble: y des alten Punkts
+      DOT  Z          ; Ausgänge auf 0
+cmd:  DIN  V          ; hier läuft move einfach weiter: zweiter Befehl
+      ANDI #1,V
+      BRZ  cmd
+      DOT  FUNC       ; ACK
+      DOT  X          ; neuer Punkt
+      DOT  Y
+      DOT  Z
+      RET
+```
+
+Ob ein Punkt an- oder ausgeschaltet wird, steckt in den Koordinaten selbst: y + `#8` heißt „Pixel an“, x + `#8` und y + `#8` heißt „Pixel aus“. Die Farbe bleibt in beiden Fällen, wie sie in der Farbmatrix steht.
 
 ### Unterprogramm im Unterprogramm, obwohl es das nicht gibt
 
 Der 2090 merkt sich nur eine Rücksprungadresse. Ein Unterprogramm darf deshalb kein weiteres aufrufen. Die Tasterabfrage `ply` ist ein Unterprogramm und muss trotzdem `move` benutzen. Der Ausweg: Sie springt mit `GOTO` nach `move`, und dessen `RET` kehrt direkt zum Aufrufer von `ply` zurück. So kann `ply` zweimal je Ballschritt aufgerufen werden, ohne doppelt im Speicher zu stehen.
 
+```
+loop: CALL ply        ; Aufrufer
+      ...
+ply:  DIN  V          ; Taster lesen
+      ...
+pdn:  ...             ; Schläger ändern, Punkte vorbereiten
+      GOTO move       ; kein CALL: das RET von move kehrt zum Aufrufer von ply zurück
+```
+
 ### Der Spielstand in der zweiten Registerbank
 
-Alle 16 Register sind im Spiel belegt. Die Punkte liegen deshalb in den Speicherregistern M6 und M7. Fällt ein Punkt, tauscht `EXRL` die untere Registerbank gegen die Speicherregister, das Programm zählt und zeigt den Stand an, und ein zweites `EXRL` holt die Spielregister zurück. `EXRL` verändert die Flags nicht. Der Vergleich „9 erreicht?“ gilt also noch nach dem Tausch.
+Alle 16 Register sind im Spiel belegt. Die Punkte liegen deshalb in den Speicherregistern `M6` und `M7`. Fällt ein Punkt, tauscht `EXRL` die untere Registerbank gegen die Speicherregister, das Programm zählt und zeigt den Stand an, und ein zweites `EXRL` holt die Spielregister zurück. `EXRL` verändert die Flags nicht. Der Vergleich „9 erreicht?“ gilt also noch nach dem Tausch.
+
+```
+ptp:  EXRL            ; R0-R7 = M0-M7: der Spielstand liegt in R6, R7
+      ADDI #1,PS      ; PS = PS + #1   (R7)
+      CMPI #9,PS      ; Carry, wenn PS > #9  (EXRL ändert die Flags nicht)
+pnt:  DISP #2,CS      ; Spielstand anzeigen
+end:  BRZ  end        ; Zero, wenn gerade #9 erreicht: bleibt stehen
+      KIN  V          ; sonst weiter mit einer Taste
+      EXRL            ; Spielregister zurück
+      GOTO newb
+```
 
 ### Ein Register, das immer 0 ist
 
-Nach jedem Befehl müssen die Ausgänge auf 0. R0 wird im ganzen Programm nie beschrieben und ist nach dem Einschalten 0. Ein `DOT` von R0 spart jedes Mal das vorherige `MOVI 0`.
+Nach jedem Befehl müssen die Ausgänge auf `#0`. `R0` (`Z`) wird im ganzen Programm nie beschrieben und ist nach dem Einschalten `#0`. Ein `DOT Z` spart jedes Mal das vorherige `MOVI #0`.
