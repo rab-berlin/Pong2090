@@ -3,7 +3,7 @@
 Pong für den Busch Microtronic 2090 mit dem [ESP2090 Studio](https://github.com/rab-berlin/ESP2090) (8x8-LED-Matrix) und 2 Tastern: der Spieler links gegen den Computer rechts in 15 Spielstufen, oder allein gegen die Wand.
 
 - 237 Programmschritte, 19 frei
-- Dateien: [pong.mic](pong.mic) (Version 03) und die Arbeitsbeschreibung [pong.xml](pong.xml)
+- Dateien: [pong.mic](pong.mic) und die Arbeitsbeschreibung [pong.xml](pong.xml)
 
 ## Spiel
 
@@ -41,14 +41,14 @@ Quelle: Benj Edwards, „The Making of Pong“, Vintage Computing and Gaming (20
 
 ## Technik: Zeichenbefehle statt ganzer Bilder
 
-Version 01 schickte nach jedem Schritt das ganze Bild (16 Register). Seit Version 02 ist das Programm neu geschrieben und sendet nur, was sich ändert:
+Das Programm schickt nicht nach jedem Schritt das ganze Bild (16 Register), sondern sendet nur, was sich ändert:
 
 - **Die Matrix merkt sich das Bild.** Das Programm braucht keinen Bildspeicher mehr, nur noch die Lage von Ball und Schlägern.
 - **Bewegung = zwei Punkte.** Bewegt sich der Ball oder ein Schläger um ein Feld, schaltet das Programm den alten Punkt aus und den neuen an (ACK 4, zwei Befehle direkt hintereinander).
 - **Farben ohne Umschalten.** Am Anfang setzt das Programm einmal die Farbmatrix: alles grün, Spalte 2-7 gelb. Danach schalten die Befehle nur noch Pixel an und aus, die Farbe kommt aus der Farbmatrix. Der Ball ist deshalb gelb und die Schläger grün, ohne dass die Farbe im Spiel je gewechselt wird.
 - **Matrix dauernd aktiv.** Die Taster liegen an Eingang 2 und 3, Eingang 1 bleibt für die Anfrage der Matrix (REQ). Schlafen und Wecken braucht das Programm nicht.
 
-Im Emulator dauert ein Ballschritt im Mittel 0,82 s (Version 01: 0,95 s), und die Taster werden etwa alle 0,4 s gelesen statt einmal je Schritt. Ein gutes Stück der Zeit kostet der Computergegner, der fast bei jedem Schritt zieht.
+Im Emulator dauert ein Ballschritt im Mittel 0,82 s, und die Taster werden etwa alle 0,4 s gelesen statt einmal je Schritt. Ein gutes Stück der Zeit kostet der Computergegner, der fast bei jedem Schritt zieht.
 
 ## Wie es gemacht ist
 
