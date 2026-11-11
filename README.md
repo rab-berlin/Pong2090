@@ -28,6 +28,17 @@ Die Taster werden zweimal je Ballschritt gelesen. Der eigene Schläger kann also
 
 RESET, Matrix einschalten („LED on“ in der Weboberfläche, im [Emulator2090](https://github.com/rab-berlin/Emulator2090) Taste `m`), `HALT` `NEXT` `00` `RUN`, dann die Spielstufe eingeben. Neues Spiel: RESET, RUN.
 
+## Geschichte
+
+- **Magnavox Odyssey:** Das Tischtennis-Prinzip steckt schon in der ersten Heimspielkonsole. Ralph Baer leitete das Team bei Sanders Associates, Bill Rusch skizzierte das Ping-Pong-Spiel in einem Memo vom 18. Oktober 1967. Die Odyssey hatte weder Ton noch Punkteanzeige, und die Höhe des Balls stellte man mit einem „English“-Knopf ein.
+- **Nolan Bushnell** sah die Odyssey am 24. Mai 1972 bei einer Vorführung. Er stellte im Juni 1972 **Allan Alcorn** (24, vorher Ampex) ein und gab ihm als Aufwärmübung ein Ball-und-Schläger-Spiel mit Punktestand. Es war als Übung gedacht. Alcorn und Ted Dabney fanden es so gut, dass daraus ein Produkt wurde.
+- **Alcorns Verbesserungen:** Jeder Schläger ist in **acht Segmente** geteilt, und der Abprallwinkel hängt vom getroffenen Segment ab. Bei langen Ballwechseln wird der Ball schneller, und nach einem Punkt beginnt er wieder langsam. Oben und unten prallt der Ball an Wänden ab. Dazu gab es einen einfachen Ton für Schläger und Wand, den „Pong“.
+- **Andy Capp's Tavern:** Der Prototyp stand in dieser Bar, neben dem Automaten *Computer Space*. Es sprach sich herum, und morgens um 9 Uhr standen die Leute an. Nach etwa zwei Wochen rief die Bar Alcorn nachts an, weil der Automat nicht mehr ging. Als er die Münzbox öffnete, fielen ihm die Vierteldollarstücke entgegen: Sie war übergequollen und hatte den Mechanismus blockiert.
+- **November 1972:** Atari brachte *Pong* heraus.
+- Dieses Programm übernimmt die Idee, dass der Treffpunkt auf dem Schläger den Winkel bestimmt, aber nur mit zwei Stufen (flach oder steil) statt acht Segmenten.
+
+Quelle: Benj Edwards, „The Making of Pong“, Vintage Computing and Gaming (2012).
+
 ## Technik: Zeichenbefehle statt ganzer Bilder
 
 Version 01 schickte nach jedem Schritt das ganze Bild (16 Register). Seit Version 02 ist das Programm neu geschrieben und sendet nur, was sich ändert:
