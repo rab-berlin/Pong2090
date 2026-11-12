@@ -3,7 +3,7 @@
 Pong für den Busch Microtronic 2090 mit dem [ESP2090 Studio](https://github.com/rab-berlin/ESP2090) (8x8-LED-Matrix) und 2 Tastern: der Spieler links gegen den Computer rechts in 15 Spielstufen, oder allein gegen die Wand.
 
 - 237 Programmschritte, 19 frei
-- Dateien: [pong.mic](pong.mic) und die Arbeitsbeschreibung [pong.xml](pong.xml)
+- Datei: [pong.mic](pong.mic)
 
 ## Spiel
 
